@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use AOVGuard in academic work, please cite this software."
+title: "AOVGuard: EXR Structure Inspection and AOV Validation"
+type: software
+authors:
+  - family-names: "Medina G."
+    given-names: "Joshua A."
+version: 1.2.1
+date-released: 2026-09-18
+license: MIT
+abstract: >-
+  AOVGuard is a Python tool for automatic OpenEXR structure inspection,
+  frame-first AOV analysis, configurable validation rules, sequence checking,
+  and structured reporting for VFX lighting and pipeline workflows.
+keywords:
+  - OpenEXR
+  - AOV
+  - VFX pipeline
+  - render validation
+  - lighting

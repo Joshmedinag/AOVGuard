@@ -1,0 +1,40 @@
+{
+  "generated_at_utc": "2026-08-14T19:55:21.901110+00:00",
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.12",
+    "numpy": "2.4.6",
+    "openexr": "3.4.12"
+  },
+  "dataset": {
+    "frames": 12,
+    "aovs": 5,
+    "width": 320,
+    "height": 180,
+    "repeats": 30
+  },
+  "aov_first": {
+    "median_seconds": 0.45864160000019183,
+    "min_seconds": 0.3991264999986015,
+    "median_python_peak_bytes": 5554772,
+    "read_calls": 60,
+    "checksum": 5365412.494333796
+  },
+  "frame_first": {
+    "median_seconds": 0.11432809999951132,
+    "min_seconds": 0.10228769999957876,
+    "median_python_peak_bytes": 11077580,
+    "read_calls": 12,
+    "checksum": 5365412.494333796
+  },
+  "comparison": {
+    "checksums_match": true,
+    "read_call_reduction_factor": 5.0,
+    "median_speedup_factor": 4.011626188156299
+  },
+  "measurement_notes": [
+    "Read calls are calls made by AOVGuard to the reader, not operating-system file opens.",
+    "Python peak memory is measured with tracemalloc and excludes native allocations made by OpenEXR.",
+    "Timing is machine-dependent; repeated medians are reported instead of a universal performance claim."
+  ]
+}

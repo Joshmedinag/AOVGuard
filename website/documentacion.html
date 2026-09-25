@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Documentación en español de AOVGuard para analizar OpenEXR, AOVs y secuencias de render.">
+  <title>Documentación | AOVGuard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="docs-page">
+  <header class="site-header docs-header">
+    <a class="brand" href="index.html">AOVGuard</a>
+    <nav aria-label="Navegación de documentación">
+      <a href="index.html">Inicio</a>
+      <a href="#instalacion">Instalación</a>
+      <a href="#gui">GUI</a>
+      <a href="#cli">CLI</a>
+      <a href="#reglas">Reglas</a>
+      <a href="#problemas">Ayuda</a>
+    </nav>
+  </header>
+
+  <main class="docs-shell">
+    <aside class="docs-nav" aria-label="Índice de esta página">
+      <strong>Contenido</strong>
+      <a href="#vision">Visión general</a>
+      <a href="#instalacion">Instalación</a>
+      <a href="#gui">Interfaz gráfica</a>
+      <a href="#secuencias">Secuencias</a>
+      <a href="#resultados">Resultados</a>
+      <a href="#cryptomatte">Cryptomatte</a>
+      <a href="#reglas">Reglas y presets</a>
+      <a href="#cli">Línea de comandos</a>
+      <a href="#reportes">Reportes y baseline</a>
+      <a href="#problemas">Solución de problemas</a>
+      <a href="#limitaciones">Limitaciones</a>
+      <a href="#verificacion">Verificación</a>
+    </aside>
+
+    <article class="docs-content">
+      <header class="docs-hero" id="vision">
+        <p class="eyebrow">Guía de usuario y referencia técnica</p>
+        <h1>Documentación de AOVGuard</h1>
+        <p class="lead">AOVGuard valida archivos OpenEXR y secuencias de render. Detecta errores de lectura, NaN, infinitos, AOVs vacíos, canales desconocidos, cambios temporales y problemas de continuidad sin ocultar datos no reconocidos.</p>
+        <div class="status-note"><strong>Estado verificado:</strong> 282 pruebas superadas, 95,37 % de cobertura combinada de instrucciones y ramas en Python 3.12.</div>
+      </header>
+
+      <section id="instalacion">
+        <h2>Instalación</h2>
+        <p>Se recomienda Windows o Linux, Python 3.12 y <code>uv</code>. El proyecto admite Python 3.11 y 3.12.</p>
+        <pre><code>cd "C:\ruta\AOVGuard"
+python -m pip install uv
+uv python install 3.12
+uv sync --python 3.12 --extra dev</code></pre>
+        <p>Después de sincronizar el entorno:</p>
+        <pre><code>uv run aovguard-ui
+uv run aovguard --help</code></pre>
+        <div class="callout"><strong>Importante:</strong> AOVGuard no crea EXR de demostración durante la instalación ni el análisis. La carpeta <code>examples</code> se conserva vacía salvo por su marcador de control de versiones.</div>
+      </section>
+
+      <section id="gui">
+        <h2>Uso de la interfaz gráfica</h2>
+        <ol class="steps">
+          <li><strong>Selecciona la fuente.</strong> Usa <em>File</em> para un EXR o <em>Folder</em> para una secuencia.</li>
+          <li><strong>Carga un preset opcional.</strong> Puede ser TOML o JSON. Sin preset se aplican las reglas predeterminadas.</li>
+          <li><strong>Elige el modelo de luminancia.</strong> Rec.709 es el valor habitual; Rec.601 y pesos personalizados también están disponibles.</li>
+          <li><strong>Configura el origen.</strong> <em>Auto</em> infiere el tipo; <em>Sequence</em> exige frames numerados; <em>Comparison</em> trata los EXR como muestras independientes.</li>
+          <li><strong>Revisa el descubrimiento.</strong> Ajusta patrón, búsqueda recursiva, profundidad, múltiples secuencias, límite y rango esperado.</li>
+          <li><strong>Usa Inspect Structure.</strong> Comprueba resolución, partes, canales, AOVs y categorías antes de leer píxeles.</li>
+          <li><strong>Ejecuta Analyze.</strong> El progreso indica frames procesados y los errores de lectura se conservan como hallazgos.</li>
+          <li><strong>Revisa y exporta.</strong> Filtra hallazgos, navega a outliers y genera JSON o HTML.</li>
+        </ol>
+
+        <h3>Interpretación de la fuente</h3>
+        <div class="reference-grid">
+          <div><strong>Auto</strong><p>Resuelve archivo único, secuencia numerada o conjunto de comparación según los nombres encontrados.</p></div>
+          <div><strong>Sequence</strong><p>Activa validación de gaps, duplicados y padding. No admite mezclar frames numerados con EXR sueltos.</p></div>
+          <div><strong>Comparison</strong><p>Compara muestras deliberadamente independientes y evita declarar como gap una diferencia de nombres.</p></div>
+        </div>
+      </section>
+
+      <section id="secuencias">
+        <h2>Secuencias y rango esperado</h2>
+        <p>El verificador agrupa nombres por el último bloque numérico anterior a <code>.exr</code>. Por ejemplo, <code>shot.0001.exr</code> y <code>shot.0002.exr</code> forman el patrón <code>shot.####.exr</code>.</p>
+        <h3>Frame Limit y Expected Frame Range no son lo mismo</h3>
+        <table>
+          <thead><tr><th>Opción</th><th>Propósito</th><th>Ejemplo</th></tr></thead>
+          <tbody>
+            <tr><td>Frame Limit</td><td>Evita iniciar un análisis más grande de lo previsto.</td><td>Rechazar si se descubren más de 1.000 archivos.</td></tr>
+            <tr><td>Expected Frame Range</td><td>Declara qué números deben existir en una sola secuencia.</td><td>Con 1–800 y sólo 1–301 presentes, reporta 302–800 como ausentes.</td></tr>
+          </tbody>
+        </table>
+        <p>La ausencia dentro del rango esperado es un error. Los frames encontrados fuera de ese rango generan una advertencia. Esta opción no debe usarse en modo <em>Comparison</em>.</p>
+        <pre><code>uv run aovguard check-sequence "C:\renders\shot" --expected-frame-range 1 800</code></pre>
+        <p><code>check-sequence</code> sólo revisa nombres; no decodifica píxeles. Devuelve código 1 si faltan frames o existen números fuera del rango declarado.</p>
+      </section>
+
+      <section id="resultados">
+        <h2>Cómo interpretar los resultados</h2>
+        <div class="reference-grid two-columns">
+          <div><strong>Findings</strong><p>Errores, advertencias e información. Incluye regla, AOV, canal, archivo y evidencia.</p></div>
+          <div><strong>Metrics</strong><p>Métricas agregadas de AOVs de color y gráfica por frame con mediana y rango robusto.</p></div>
+          <div><strong>Outliers</strong><p>Muestras ordenadas por puntuación robusta. El botón de localización lleva al frame exacto.</p></div>
+          <div><strong>Frames / Samples</strong><p>Luminancia, valores no finitos y cambio respecto a la mediana y al frame anterior.</p></div>
+          <div><strong>Technical</strong><p>Mínimo, promedio, máximo, NaN, infinitos y negativos para cada canal técnico.</p></div>
+          <div><strong>Sequences</strong><p>Patrón, rango descubierto, presentes, ausentes, duplicados y padding.</p></div>
+        </div>
+
+        <h3>Estados</h3>
+        <ul>
+          <li><strong>PASS:</strong> no existen errores ni advertencias activas.</li>
+          <li><strong>WARNING:</strong> hay condiciones que requieren revisión, pero pueden ser válidas para el plano.</li>
+          <li><strong>FAIL:</strong> existe al menos un error, por ejemplo un EXR corrupto, NaN/Inf o un rango esperado incompleto.</li>
+        </ul>
+        <p>La gráfica permite alternar entre luminancia, delta respecto al frame anterior y porcentaje relativo. Los triángulos indican outliers robustos y los cuadrados, errores de frame.</p>
+      </section>
+
+      <section id="cryptomatte">
+        <h2>Tratamiento de Cryptomatte</h2>
+        <p>Los valores de identificación de Cryptomatte se almacenan como números de punto flotante, pero no representan color ni brillo. AOVGuard consulta metadatos con la forma <code>cryptomatte/&lt;id&gt;/name</code> para reconocer la capa base y sus capas numeradas.</p>
+        <ul>
+          <li>Los AOVs Cryptomatte se conservan en el inventario y en diagnósticos técnicos.</li>
+          <li>Todos sus canales ID y coverage continúan disponibles para comprobar NaN e infinitos.</li>
+          <li>No participan en luminancia, cambios temporales, outliers de brillo ni reglas genéricas de magnitud extrema.</li>
+          <li>Valores enormes o negativos de ID no se consideran por sí mismos un defecto.</li>
+        </ul>
+        <div class="callout"><strong>Archivo sin metadatos:</strong> si un renderer elimina los atributos Cryptomatte, clasifica el AOV mediante <code>[aov_categories]</code>. AOVGuard evita asumir que todo nombre que empiece por <code>crypto_</code> es Cryptomatte.</div>
+
+        <h3>Categorías de AOV</h3>
+        <table>
+          <thead><tr><th>Categoría</th><th>Tratamiento</th></tr></thead>
+          <tbody>
+            <tr><td>color</td><td>Luminancia, no-black ratio, series temporales y diagnóstico por canal.</td></tr>
+            <tr><td>scalar, vector, mask, depth</td><td>Todos los componentes se diagnostican por canal; no se aplica luminancia de color.</td></tr>
+            <tr><td>cryptomatte</td><td>Integridad por canal sin interpretar IDs como intensidad.</td></tr>
+            <tr><td>unknown</td><td>Se conserva y se señala; nunca se descarta silenciosamente.</td></tr>
+            <tr><td>ignored</td><td>Decisión explícita del usuario; permanece visible y conserva comprobaciones de integridad.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="reglas">
+        <h2>Reglas y presets</h2>
+        <p>Un preset permite activar reglas, cambiar severidades, establecer parámetros y clasificar AOVs. Los nombres de <code>[aov_categories]</code> no distinguen mayúsculas y minúsculas.</p>
+        <pre><code>preset = "entrega_iluminacion"
+
+[aov_categories]
+custom_depth = "depth"
+crypto_asset = "cryptomatte"
+vendor_payload = "ignored"
+
+[rules.nan_inf]
+enabled = true
+severity = "error"
+supported_aov_types = ["color", "scalar", "vector", "mask", "depth", "cryptomatte", "unknown", "ignored"]
+
+[rules.empty_aov]
+enabled = true
+severity = "warning"
+supported_aov_types = ["color"]
+
+[rules.extreme_values]
+enabled = false
+severity = "warning"
+
+[rules.extreme_values.parameters]
+max_absolute = 1000000.0</code></pre>
+        <p>Las reglas de integridad pueden aplicarse a canales técnicos. Las reglas artísticas como <code>empty_aov</code> y <code>near_empty_aov</code> se limitan a color. La interfaz permite guardar una clasificación desconocida en el preset únicamente después de una confirmación explícita.</p>
+      </section>
+
+      <section id="cli">
+        <h2>Línea de comandos</h2>
+        <h3>Inspección estructural</h3>
+        <pre><code>uv run aovguard inspect-structure "C:\renders\shot.0001.exr"</code></pre>
+        <h3>Análisis con JSON y HTML</h3>
+        <pre><code>uv run aovguard analyze "C:\renders\shot" --source-mode sequence --expected-frame-range 1 800 --rules-config config\rules.example.toml --json reports\shot.json --html reports\shot.html</code></pre>
+        <h3>Descubrimiento recursivo</h3>
+        <pre><code>uv run aovguard analyze "C:\renders" --frame-pattern "shot.*.exr" --recursive --max-depth 2</code></pre>
+        <p>Por seguridad, múltiples secuencias numeradas requieren <code>--allow-multiple-sequences</code>. Usa <code>--max-frames 1000</code> como límite de tamaño y <code>--fail-on-warning</code> para publicación estricta.</p>
+        <h3>Códigos de salida</h3>
+        <ul>
+          <li><code>0</code>: PASS, o WARNING si no se solicitó modo estricto.</li>
+          <li><code>1</code>: FAIL, error de lectura/configuración o WARNING con <code>--fail-on-warning</code>.</li>
+          <li><code>check-sequence</code> también devuelve 1 ante un rango esperado incompleto.</li>
+        </ul>
+      </section>
+
+      <section id="reportes">
+        <h2>Reportes y comparación baseline</h2>
+        <p>JSON es el reporte canónico para máquinas. Registra versión, opciones, fuente, frames descubiertos/procesados/fallidos, inventario de AOVs, métricas, series, secuencias y hallazgos sin emitir tokens NaN/Infinity no estándar.</p>
+        <p>HTML presenta el mismo resultado para revisión humana. Incluye estado, configuración, métricas, diagnóstico técnico, secuencias, hallazgos y recomendaciones.</p>
+        <pre><code>uv run aovguard compare-reports reports\baseline.json reports\candidate.json --json reports\comparacion.json</code></pre>
+        <p>La comparación muestra AOVs añadidos o eliminados, cambios métricos, hallazgos nuevos y problemas resueltos. En la GUI, analiza primero la versión candidata y después usa <em>Compare Baseline</em>.</p>
+      </section>
+
+      <section id="problemas">
+        <h2>Solución de problemas</h2>
+        <dl class="troubleshooting">
+          <dt>“EXR contains no image parts”</dt>
+          <dd>El archivo está vacío, incompleto o corrupto. AOVGuard lo marca como error de lectura y continúa con los demás frames; vuelve a renderizar o reemplaza ese EXR.</dd>
+          <dt>No se encuentran archivos</dt>
+          <dd>Comprueba la ruta y <em>Frame Pattern</em>. Activa búsqueda recursiva si los EXR están en subcarpetas y aumenta <em>Max Depth</em> si es necesario.</dd>
+          <dt>Se detectan varias secuencias</dt>
+          <dd>Restringe el patrón o selecciona una carpeta más concreta. Habilita múltiples secuencias sólo cuando combinarlas sea intencional.</dd>
+          <dt>Cryptomatte aparece como color</dt>
+          <dd>Revisa si el archivo conserva los atributos <code>cryptomatte/.../name</code>. Si no existen, asigna <code>cryptomatte</code> mediante el preset.</dd>
+          <dt>Valores técnicos extremadamente grandes</dt>
+          <dd>Pueden ser IDs codificados. La tabla usa notación científica; decide según la categoría y no por la magnitud aislada.</dd>
+          <dt>La interfaz parece congelada</dt>
+          <dd>El análisis se ejecuta en un worker y la cancelación ocurre al terminar el frame actual. EXR grandes pueden tardar durante esa lectura.</dd>
+        </dl>
+      </section>
+
+      <section id="limitaciones">
+        <h2>Limitaciones conocidas</h2>
+        <ul>
+          <li>Deep EXR y multipart se detectan, pero el backend actual no los analiza por completo.</li>
+          <li>La herramienta no comprende intención artística; los umbrales deben calibrarse por producción.</li>
+          <li>La inferencia de categorías es conservadora. Los nombres específicos del estudio pueden necesitar un preset.</li>
+          <li>El rango esperado admite exactamente una secuencia numerada y no reemplaza un sistema de gestión de granja.</li>
+          <li>Los reportes baseline comparan evidencia de AOVGuard; no realizan comparación visual de imágenes.</li>
+        </ul>
+      </section>
+
+      <section id="verificacion">
+        <h2>Verificación para desarrollo</h2>
+        <pre><code>$env:OPENCV_IO_ENABLE_OPENEXR="1"
+uv run pytest --cov-fail-under=95
+uv run ruff check src tests scripts experiments/benchmark_simulated_sequences.py
+uv run mypy</code></pre>
+        <p>Última ejecución verificada: <strong>282 pruebas superadas</strong>, <strong>95,37 % de cobertura</strong>, Ruff sin incidencias y mypy estricto correcto en 39 módulos. Las pruebas crean EXR únicamente en directorios temporales; el producto no genera renders de demostración.</p>
+        <div class="text-links"><a href="../README.md">README del repositorio</a><a href="../CHANGELOG.md">Historial de cambios</a><a href="../docs/limitations.md">Limitaciones técnicas</a><a href="../LICENSE">Licencia MIT</a></div>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <strong>AOVGuard</strong>
+    <span>Documentación en español &middot; actualización 2026</span>
+    <a href="index.html">Volver al inicio</a>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,808 @@
+{
+  "schema_version": "1.0",
+  "metadata": {
+    "tool": "AOVGuard",
+    "version": "1.0.0",
+    "generated_utc": "2026-08-14T05:59:16.814089+00:00",
+    "source": "external_real_exr_set",
+    "source_kind": "comparison_set",
+    "status": "warning",
+    "frames_discovered": 2,
+    "frames_processed": 2,
+    "frames_failed": 0,
+    "aovs_detected": 8,
+    "aovs_analyzed": 5,
+    "color_aovs_analyzed": 5,
+    "technical_aovs_diagnosed": 3,
+    "aovs_diagnosed": 8,
+    "summary_by_aov_category": {
+      "color": 5,
+      "vector": 2,
+      "depth": 1
+    },
+    "rules_executed": [
+      "nan_inf",
+      "empty_aov",
+      "near_empty_aov",
+      "resolution_mismatch",
+      "aov_structure_mismatch"
+    ],
+    "summary_by_severity": {
+      "warning": 1
+    },
+    "options": {
+      "preset_name": null,
+      "enabled_rules": [
+        "nan_inf",
+        "empty_aov",
+        "near_empty_aov",
+        "resolution_mismatch",
+        "aov_structure_mismatch"
+      ],
+      "luminance_weights": [
+        0.2126,
+        0.7152,
+        0.0722
+      ],
+      "non_black_threshold": 1e-05,
+      "frame_pattern": "*.exr",
+      "recursive": false,
+      "max_depth": 1,
+      "allow_multiple_sequences": false,
+      "source_mode": "comparison"
+    }
+  },
+  "frames": [
+    "external_real_exr_set\\frutamultilayer.exr",
+    "external_real_exr_set\\frutamultilayernolight.exr"
+  ],
+  "successful_frames": [
+    "external_real_exr_set\\frutamultilayer.exr",
+    "external_real_exr_set\\frutamultilayernolight.exr"
+  ],
+  "failed_frames": [],
+  "warnings": [],
+  "sequence_check": {
+    "source": "external_real_exr_set",
+    "summary": {
+      "sequence_count": 0,
+      "unnumbered_file_count": 2,
+      "missing_frame_count": 0,
+      "duplicate_frame_count": 0
+    },
+    "sequences": [],
+    "unnumbered_files": [
+      "external_real_exr_set\\frutamultilayer.exr",
+      "external_real_exr_set\\frutamultilayernolight.exr"
+    ],
+    "warnings": []
+  },
+  "inspections": [
+    {
+      "path": "external_real_exr_set\\frutamultilayer.exr",
+      "width": 1920,
+      "height": 1080,
+      "channels": [
+        "A",
+        "B",
+        "G",
+        "N.B",
+        "N.G",
+        "N.R",
+        "P.B",
+        "P.G",
+        "P.R",
+        "R",
+        "Z.B",
+        "Z.G",
+        "Z.R",
+        "albedo.B",
+        "albedo.G",
+        "albedo.R",
+        "diffuse_direct.B",
+        "diffuse_direct.G",
+        "diffuse_direct.R",
+        "emission.B",
+        "emission.G",
+        "emission.R",
+        "specular_direct.B",
+        "specular_direct.G",
+        "specular_direct.R"
+      ],
+      "aovs": [
+        {
+          "name": "beauty",
+          "channels": [
+            "R",
+            "G",
+            "B",
+            "A"
+          ],
+          "category": "color",
+          "category_confidence": "root_rgb_channels"
+        },
+        {
+          "name": "N",
+          "channels": [
+            "N.B",
+            "N.G",
+            "N.R"
+          ],
+          "category": "vector",
+          "category_confidence": "known_vector_name"
+        },
+        {
+          "name": "P",
+          "channels": [
+            "P.B",
+            "P.G",
+            "P.R"
+          ],
+          "category": "vector",
+          "category_confidence": "known_vector_name"
+        },
+        {
+          "name": "Z",
+          "channels": [
+            "Z.B",
+            "Z.G",
+            "Z.R"
+          ],
+          "category": "depth",
+          "category_confidence": "known_depth_name"
+        },
+        {
+          "name": "albedo",
+          "channels": [
+            "albedo.B",
+            "albedo.G",
+            "albedo.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        },
+        {
+          "name": "diffuse_direct",
+          "channels": [
+            "diffuse_direct.B",
+            "diffuse_direct.G",
+            "diffuse_direct.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        },
+        {
+          "name": "emission",
+          "channels": [
+            "emission.B",
+            "emission.G",
+            "emission.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        },
+        {
+          "name": "specular_direct",
+          "channels": [
+            "specular_direct.B",
+            "specular_direct.G",
+            "specular_direct.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        }
+      ],
+      "part_count": 1,
+      "is_deep": false,
+      "warnings": []
+    },
+    {
+      "path": "external_real_exr_set\\frutamultilayernolight.exr",
+      "width": 1920,
+      "height": 1080,
+      "channels": [
+        "A",
+        "B",
+        "G",
+        "N.B",
+        "N.G",
+        "N.R",
+        "P.B",
+        "P.G",
+        "P.R",
+        "R",
+        "Z.B",
+        "Z.G",
+        "Z.R",
+        "albedo.B",
+        "albedo.G",
+        "albedo.R",
+        "diffuse_direct.B",
+        "diffuse_direct.G",
+        "diffuse_direct.R",
+        "emission.B",
+        "emission.G",
+        "emission.R",
+        "specular_direct.B",
+        "specular_direct.G",
+        "specular_direct.R"
+      ],
+      "aovs": [
+        {
+          "name": "beauty",
+          "channels": [
+            "R",
+            "G",
+            "B",
+            "A"
+          ],
+          "category": "color",
+          "category_confidence": "root_rgb_channels"
+        },
+        {
+          "name": "N",
+          "channels": [
+            "N.B",
+            "N.G",
+            "N.R"
+          ],
+          "category": "vector",
+          "category_confidence": "known_vector_name"
+        },
+        {
+          "name": "P",
+          "channels": [
+            "P.B",
+            "P.G",
+            "P.R"
+          ],
+          "category": "vector",
+          "category_confidence": "known_vector_name"
+        },
+        {
+          "name": "Z",
+          "channels": [
+            "Z.B",
+            "Z.G",
+            "Z.R"
+          ],
+          "category": "depth",
+          "category_confidence": "known_depth_name"
+        },
+        {
+          "name": "albedo",
+          "channels": [
+            "albedo.B",
+            "albedo.G",
+            "albedo.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        },
+        {
+          "name": "diffuse_direct",
+          "channels": [
+            "diffuse_direct.B",
+            "diffuse_direct.G",
+            "diffuse_direct.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        },
+        {
+          "name": "emission",
+          "channels": [
+            "emission.B",
+            "emission.G",
+            "emission.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        },
+        {
+          "name": "specular_direct",
+          "channels": [
+            "specular_direct.B",
+            "specular_direct.G",
+            "specular_direct.R"
+          ],
+          "category": "color",
+          "category_confidence": "rgb_channels"
+        }
+      ],
+      "part_count": 1,
+      "is_deep": false,
+      "warnings": []
+    }
+  ],
+  "metrics_by_aov": {
+    "albedo": {
+      "non_black_ratio": 1.0,
+      "avg_luminance": 0.1908282189780955,
+      "max_luminance": 0.784561812877655,
+      "pixel_count": 4147200,
+      "nan_count": 0,
+      "posinf_count": 0,
+      "neginf_count": 0,
+      "avg_abs_luminance": 0.1908282189780955,
+      "max_abs_luminance": 0.784561812877655
+    },
+    "beauty": {
+      "non_black_ratio": 0.9957711226851852,
+      "avg_luminance": 0.08064980523428164,
+      "max_luminance": 2.58259916305542,
+      "pixel_count": 4147200,
+      "nan_count": 0,
+      "posinf_count": 0,
+      "neginf_count": 0,
+      "avg_abs_luminance": 0.08064980523428164,
+      "max_abs_luminance": 2.58259916305542
+    },
+    "diffuse_direct": {
+      "non_black_ratio": 0.9001868730709877,
+      "avg_luminance": 0.061898550637390526,
+      "max_luminance": 1.8582451343536377,
+      "pixel_count": 4147200,
+      "nan_count": 0,
+      "posinf_count": 0,
+      "neginf_count": 0,
+      "avg_abs_luminance": 0.061898550637390526,
+      "max_abs_luminance": 1.8582451343536377
+    },
+    "emission": {
+      "non_black_ratio": 0.0,
+      "avg_luminance": 0.0,
+      "max_luminance": 0.0,
+      "pixel_count": 4147200,
+      "nan_count": 0,
+      "posinf_count": 0,
+      "neginf_count": 0,
+      "avg_abs_luminance": 0.0,
+      "max_abs_luminance": 0.0
+    },
+    "specular_direct": {
+      "non_black_ratio": 0.8994601176697531,
+      "avg_luminance": 0.009364709448023084,
+      "max_luminance": 2.4437944889068604,
+      "pixel_count": 4147200,
+      "nan_count": 0,
+      "posinf_count": 0,
+      "neginf_count": 0,
+      "avg_abs_luminance": 0.009364709448023084,
+      "max_abs_luminance": 2.4437944889068604
+    }
+  },
+  "channel_metrics_by_aov": {
+    "N": {
+      "N.B": {
+        "pixel_count": 4147200,
+        "avg_value": -0.218404541015625,
+        "min_value": -0.9999979138374329,
+        "max_value": 0.991496741771698,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 3022192
+      },
+      "N.G": {
+        "pixel_count": 4147200,
+        "avg_value": 0.6092350863233025,
+        "min_value": -0.9763824939727783,
+        "max_value": 1.0,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 329835
+      },
+      "N.R": {
+        "pixel_count": 4147200,
+        "avg_value": 0.3953900523244599,
+        "min_value": -0.7740713953971863,
+        "max_value": 0.9999997615814209,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 826954
+      }
+    },
+    "P": {
+      "P.B": {
+        "pixel_count": 4147200,
+        "avg_value": -1.3026917558834876,
+        "min_value": -11.935501098632812,
+        "max_value": 17.422561645507812,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 2551538
+      },
+      "P.G": {
+        "pixel_count": 4147200,
+        "avg_value": 2.8936817611882715,
+        "min_value": -0.15107019245624542,
+        "max_value": 7.522415637969971,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 13035
+      },
+      "P.R": {
+        "pixel_count": 4147200,
+        "avg_value": 9.206096161265432,
+        "min_value": -6.671777725219727,
+        "max_value": 18.828481674194336,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 582881
+      }
+    },
+    "Z": {
+      "Z.R": {
+        "pixel_count": 4147200,
+        "avg_value": 16.91984375,
+        "min_value": 9.339670181274414,
+        "max_value": 26.21002960205078,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      }
+    },
+    "albedo": {
+      "albedo.B": {
+        "pixel_count": 4147200,
+        "avg_value": 0.12566565996334877,
+        "min_value": 0.006404111627489328,
+        "max_value": 0.735902726650238,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "albedo.G": {
+        "pixel_count": 4147200,
+        "avg_value": 0.1878698429060571,
+        "min_value": 0.008661004714667797,
+        "max_value": 0.8139121532440186,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "albedo.R": {
+        "pixel_count": 4147200,
+        "avg_value": 0.22290996033468363,
+        "min_value": 0.011626744642853737,
+        "max_value": 0.82806396484375,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      }
+    },
+    "beauty": {
+      "B": {
+        "pixel_count": 4147200,
+        "avg_value": 0.04101805463249301,
+        "min_value": 0.0,
+        "max_value": 2.412407875061035,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "G": {
+        "pixel_count": 4147200,
+        "avg_value": 0.0783012917601032,
+        "min_value": 0.0,
+        "max_value": 2.5674426555633545,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "R": {
+        "pixel_count": 4147200,
+        "avg_value": 0.1020094770266686,
+        "min_value": 0.0,
+        "max_value": 2.6913843154907227,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      }
+    },
+    "diffuse_direct": {
+      "diffuse_direct.B": {
+        "pixel_count": 4147200,
+        "avg_value": 0.030443269941541885,
+        "min_value": 0.0,
+        "max_value": 1.6341817378997803,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "diffuse_direct.G": {
+        "pixel_count": 4147200,
+        "avg_value": 0.060573982898099926,
+        "min_value": 0.0,
+        "max_value": 1.8305559158325195,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "diffuse_direct.R": {
+        "pixel_count": 4147200,
+        "avg_value": 0.07703685619212963,
+        "min_value": 0.0,
+        "max_value": 2.033214807510376,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      }
+    },
+    "emission": {
+      "emission.B": {
+        "pixel_count": 4147200,
+        "avg_value": 0.0,
+        "min_value": 0.0,
+        "max_value": 0.0,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "emission.G": {
+        "pixel_count": 4147200,
+        "avg_value": 0.0,
+        "min_value": 0.0,
+        "max_value": 0.0,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "emission.R": {
+        "pixel_count": 4147200,
+        "avg_value": 0.0,
+        "min_value": 0.0,
+        "max_value": 0.0,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      }
+    },
+    "specular_direct": {
+      "specular_direct.B": {
+        "pixel_count": 4147200,
+        "avg_value": 0.00779210908913318,
+        "min_value": 0.0,
+        "max_value": 2.4387855529785156,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "specular_direct.G": {
+        "pixel_count": 4147200,
+        "avg_value": 0.00864776846803265,
+        "min_value": 0.0,
+        "max_value": 2.4428911209106445,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      },
+      "specular_direct.R": {
+        "pixel_count": 4147200,
+        "avg_value": 0.012310608286916474,
+        "min_value": 0.0,
+        "max_value": 2.4485344886779785,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "negative_count": 0
+      }
+    }
+  },
+  "frame_metrics": {
+    "external_real_exr_set\\frutamultilayer.exr": {
+      "beauty": {
+        "non_black_ratio": 1.0,
+        "avg_luminance": 0.1450209971037136,
+        "max_luminance": 2.58259916305542,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.1450209971037136,
+        "max_abs_luminance": 2.58259916305542
+      },
+      "albedo": {
+        "non_black_ratio": 1.0,
+        "avg_luminance": 0.19082856473243467,
+        "max_luminance": 0.784561812877655,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.19082856473243467,
+        "max_abs_luminance": 0.784561812877655
+      },
+      "diffuse_direct": {
+        "non_black_ratio": 0.9999146412037037,
+        "avg_luminance": 0.11073994843278423,
+        "max_luminance": 1.8582451343536377,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.11073994843278423,
+        "max_abs_luminance": 1.8582451343536377
+      },
+      "emission": {
+        "non_black_ratio": 0.0,
+        "avg_luminance": 0.0,
+        "max_luminance": 0.0,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.0,
+        "max_abs_luminance": 0.0
+      },
+      "specular_direct": {
+        "non_black_ratio": 0.9990152391975309,
+        "avg_luminance": 0.016993990065891675,
+        "max_luminance": 2.4437944889068604,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.016993990065891675,
+        "max_abs_luminance": 2.4437944889068604
+      }
+    },
+    "external_real_exr_set\\frutamultilayernolight.exr": {
+      "beauty": {
+        "non_black_ratio": 0.9915422453703704,
+        "avg_luminance": 0.01627861336484971,
+        "max_luminance": 1.169297456741333,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.01627861336484971,
+        "max_abs_luminance": 1.169297456741333
+      },
+      "albedo": {
+        "non_black_ratio": 1.0,
+        "avg_luminance": 0.1908278732237563,
+        "max_luminance": 0.784561812877655,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.1908278732237563,
+        "max_abs_luminance": 0.784561812877655
+      },
+      "diffuse_direct": {
+        "non_black_ratio": 0.8004591049382717,
+        "avg_luminance": 0.013057152841996818,
+        "max_luminance": 0.20376427471637726,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.013057152841996818,
+        "max_abs_luminance": 0.20376427471637726
+      },
+      "emission": {
+        "non_black_ratio": 0.0,
+        "avg_luminance": 0.0,
+        "max_luminance": 0.0,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.0,
+        "max_abs_luminance": 0.0
+      },
+      "specular_direct": {
+        "non_black_ratio": 0.7999049961419753,
+        "avg_luminance": 0.0017354288301544968,
+        "max_luminance": 1.1353474855422974,
+        "pixel_count": 2073600,
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0,
+        "avg_abs_luminance": 0.0017354288301544968,
+        "max_abs_luminance": 1.1353474855422974
+      }
+    }
+  },
+  "series_metrics_by_aov": {
+    "albedo": {
+      "frame_count": 2,
+      "median_luminance": 0.1908282189780955,
+      "mad_luminance": 3.4575433918715426e-07,
+      "min_luminance": 0.1908278732237563,
+      "max_luminance": 0.19082856473243467,
+      "max_frame_delta": 6.915086783743085e-07,
+      "max_frame_delta_from": "external_real_exr_set\\frutamultilayer.exr",
+      "max_frame_delta_to": "external_real_exr_set\\frutamultilayernolight.exr",
+      "outlier_frames": []
+    },
+    "beauty": {
+      "frame_count": 2,
+      "median_luminance": 0.08064980523428165,
+      "mad_luminance": 0.06437119186943194,
+      "min_luminance": 0.01627861336484971,
+      "max_luminance": 0.1450209971037136,
+      "max_frame_delta": 0.1287423837388639,
+      "max_frame_delta_from": "external_real_exr_set\\frutamultilayer.exr",
+      "max_frame_delta_to": "external_real_exr_set\\frutamultilayernolight.exr",
+      "outlier_frames": []
+    },
+    "diffuse_direct": {
+      "frame_count": 2,
+      "median_luminance": 0.061898550637390526,
+      "mad_luminance": 0.048841397795393704,
+      "min_luminance": 0.013057152841996818,
+      "max_luminance": 0.11073994843278423,
+      "max_frame_delta": 0.09768279559078741,
+      "max_frame_delta_from": "external_real_exr_set\\frutamultilayer.exr",
+      "max_frame_delta_to": "external_real_exr_set\\frutamultilayernolight.exr",
+      "outlier_frames": []
+    },
+    "emission": {
+      "frame_count": 2,
+      "median_luminance": 0.0,
+      "mad_luminance": 0.0,
+      "min_luminance": 0.0,
+      "max_luminance": 0.0,
+      "max_frame_delta": 0.0,
+      "max_frame_delta_from": null,
+      "max_frame_delta_to": null,
+      "outlier_frames": []
+    },
+    "specular_direct": {
+      "frame_count": 2,
+      "median_luminance": 0.009364709448023086,
+      "mad_luminance": 0.007629280617868588,
+      "min_luminance": 0.0017354288301544968,
+      "max_luminance": 0.016993990065891675,
+      "max_frame_delta": 0.015258561235737178,
+      "max_frame_delta_from": "external_real_exr_set\\frutamultilayer.exr",
+      "max_frame_delta_to": "external_real_exr_set\\frutamultilayernolight.exr",
+      "outlier_frames": []
+    }
+  },
+  "findings": [
+    {
+      "rule_id": "empty_aov",
+      "severity": "warning",
+      "message": "No visible AOV contribution was detected in 2/2 analyzed files.",
+      "file": null,
+      "aov": "emission",
+      "channel": null,
+      "metrics": {
+        "avg_luminance": 0.0,
+        "max_luminance": 0.0,
+        "avg_abs_luminance": 0.0,
+        "max_abs_luminance": 0.0,
+        "affected_file_count": 2,
+        "analyzed_file_count": 2
+      },
+      "affected_files": [
+        "external_real_exr_set\\frutamultilayer.exr",
+        "external_real_exr_set\\frutamultilayernolight.exr"
+      ]
+    }
+  ]
+}

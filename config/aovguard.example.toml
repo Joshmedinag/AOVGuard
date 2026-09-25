@@ -1,0 +1,7 @@
+[analysis]
+empty_max_luminance = 0.00001
+empty_max_average = 0.000001
+nearly_empty_max_ratio = 0.02
+nearly_empty_max_average = 0.001
+review_max_ratio = 0.05
+review_max_average = 0.01

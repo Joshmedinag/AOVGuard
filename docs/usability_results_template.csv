@@ -1,0 +1,8 @@
+participant_code,experience_band,role,task_id,completed,elapsed_seconds,assistance,critical_error,navigation_errors,confidence_1_to_5,observation
+PXX,novice_or_intermediate_or_expert,role,T1,,,,,,,
+PXX,novice_or_intermediate_or_expert,role,T2,,,,,,,
+PXX,novice_or_intermediate_or_expert,role,T3,,,,,,,
+PXX,novice_or_intermediate_or_expert,role,T4,,,,,,,
+PXX,novice_or_intermediate_or_expert,role,T5,,,,,,,
+PXX,novice_or_intermediate_or_expert,role,T6,,,,,,,
+PXX,novice_or_intermediate_or_expert,role,T7,,,,,,,

@@ -1,0 +1,48 @@
+{
+  "generated_at_utc": "2026-08-14T20:00:17.316590+00:00",
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.12",
+    "numpy": "2.4.6",
+    "openexr": "3.4.12"
+  },
+  "dataset": {
+    "frames": 12,
+    "aovs": 5,
+    "width": 320,
+    "height": 180,
+    "repeats": 30
+  },
+  "aov_first": {
+    "median_seconds": 0.4387417500010997,
+    "min_seconds": 0.2571406000006391,
+    "q1_seconds": 0.4069635499990909,
+    "q3_seconds": 0.47995137500038254,
+    "iqr_seconds": 0.07298782500129164,
+    "median_python_peak_bytes": 5554772,
+    "read_calls": 60,
+    "checksum": 5365412.494333796
+  },
+  "frame_first": {
+    "median_seconds": 0.11808190000010654,
+    "min_seconds": 0.06169989999943937,
+    "q1_seconds": 0.10253782500103625,
+    "q3_seconds": 0.1394804750007097,
+    "iqr_seconds": 0.03694264999967345,
+    "median_python_peak_bytes": 11077580,
+    "read_calls": 12,
+    "checksum": 5365412.494333796
+  },
+  "comparison": {
+    "checksums_match": true,
+    "read_call_reduction_factor": 5.0,
+    "median_speedup_factor": 3.7155715651653964
+  },
+  "measurement_notes": [
+    "Read calls are calls made by AOVGuard to the reader, not operating-system file opens.",
+    "Python peak memory is measured with tracemalloc and excludes native allocations made by OpenEXR.",
+    "One unrecorded warm-up run was completed for each strategy.",
+    "Strategy order alternated on each repetition to balance cache and order effects.",
+    "Timing is machine-dependent; medians and interquartile ranges are reported instead of a universal performance claim."
+  ]
+}

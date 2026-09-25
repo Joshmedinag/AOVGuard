@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AOVGuard Analysis Report</title>
+  <style>
+    :root { color-scheme: light; --line:#d7dce2; --muted:#5d6670; --surface:#f6f7f8; }
+    * { box-sizing: border-box; }
+    body { margin:0; color:#18202a; background:#fff; font:14px/1.45 "Segoe UI", Arial, sans-serif; }
+    header { padding:24px 32px; border-bottom:1px solid var(--line); background:#202833; color:#fff; }
+    h1 { margin:0 0 4px; font-size:24px; letter-spacing:0; }
+    h2 { margin:28px 0 10px; font-size:17px; letter-spacing:0; }
+    main { max-width:1400px; margin:0 auto; padding:20px 32px 40px; }
+    .source { color:#dbe2ea; overflow-wrap:anywhere; }
+    .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+    .metric { border:1px solid var(--line); padding:12px; background:var(--surface); border-radius:4px; }
+    .metric strong { display:block; margin-top:3px; font-size:20px; }
+    .status { display:inline-block; margin-top:12px; padding:5px 10px; border-radius:4px; font-weight:700; }
+    .status-pass { background:#d7f2df; color:#145c2c; }
+    .status-warning { background:#fff0bd; color:#704f00; }
+    .status-fail { background:#ffdcdc; color:#8b1e1e; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { padding:8px 9px; border:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { background:#eef1f4; white-space:nowrap; }
+    tbody tr:nth-child(even) { background:#fafbfc; }
+    .severity { font-weight:700; }
+    .severity-error { color:#a11f1f; } .severity-warning { color:#795600; } .severity-info { color:#1c5c8f; }
+    .empty { color:var(--muted); font-style:italic; }
+    footer { margin-top:32px; color:var(--muted); }
+  </style>
+</head>
+<body>
+<header>
+  <h1>AOVGuard Analysis Report</h1>
+  <div class="source">external_real_exr_set</div>
+  <div class="source">Source interpretation: comparison_set</div>
+  <span class="status status-warning">WARNING</span>
+</header>
+<main>
+  <section class="summary">
+    <div class="metric">Frames discovered<strong>2</strong></div>
+    <div class="metric">Frames processed<strong>2</strong></div>
+    <div class="metric">Frames failed<strong>0</strong></div>
+    <div class="metric">Color AOVs<strong>5</strong></div>
+    <div class="metric">Technical AOVs<strong>3</strong></div>
+    <div class="metric">Errors<strong>0</strong></div>
+    <div class="metric">Warnings<strong>1</strong></div>
+  </section>
+  <h2>Configuration</h2>
+  <p>Preset: <strong>Default rules</strong></p>
+  
+  <h2>Sequences</h2>
+  <table><thead><tr><th>Pattern</th><th>Directory</th><th>Range</th><th>Present</th><th>Missing</th><th>Duplicates</th></tr></thead>
+  <tbody><tr><td colspan="6" class="empty">No numbered sequence detected.</td></tr></tbody></table>
+  <h2>AOV Metrics</h2>
+  <table><thead><tr><th>AOV</th><th>Non-black ratio</th><th>Average luminance</th><th>Maximum luminance</th><th>Median</th><th>MAD</th><th>Outliers</th><th>Non-finite values</th></tr></thead>
+  <tbody><tr><td>albedo</td><td>1.00000</td><td>0.190828</td><td>0.784562</td><td>0.190828</td><td>0.000000</td><td>0</td><td>0</td></tr><tr><td>beauty</td><td>0.99577</td><td>0.080650</td><td>2.582599</td><td>0.080650</td><td>0.064371</td><td>0</td><td>0</td></tr><tr><td>diffuse_direct</td><td>0.90019</td><td>0.061899</td><td>1.858245</td><td>0.061899</td><td>0.048841</td><td>0</td><td>0</td></tr><tr><td>emission</td><td>0.00000</td><td>0.000000</td><td>0.000000</td><td>0.000000</td><td>0.000000</td><td>0</td><td>0</td></tr><tr><td>specular_direct</td><td>0.89946</td><td>0.009365</td><td>2.443794</td><td>0.009365</td><td>0.007629</td><td>0</td><td>0</td></tr></tbody></table>
+  <h2>Technical AOV Diagnostics</h2>
+  <table><thead><tr><th>AOV</th><th>Category</th><th>Channel</th><th>Minimum</th><th>Average</th><th>Maximum</th><th>Non-finite values</th><th>Negative values</th></tr></thead>
+  <tbody><tr><td>N</td><td>vector</td><td>N.B</td><td>-0.999998</td><td>-0.218405</td><td>0.991497</td><td>0</td><td>3022192</td></tr><tr><td>N</td><td>vector</td><td>N.G</td><td>-0.976382</td><td>0.609235</td><td>1.000000</td><td>0</td><td>329835</td></tr><tr><td>N</td><td>vector</td><td>N.R</td><td>-0.774071</td><td>0.395390</td><td>1.000000</td><td>0</td><td>826954</td></tr><tr><td>P</td><td>vector</td><td>P.B</td><td>-11.935501</td><td>-1.302692</td><td>17.422562</td><td>0</td><td>2551538</td></tr><tr><td>P</td><td>vector</td><td>P.G</td><td>-0.151070</td><td>2.893682</td><td>7.522416</td><td>0</td><td>13035</td></tr><tr><td>P</td><td>vector</td><td>P.R</td><td>-6.671778</td><td>9.206096</td><td>18.828482</td><td>0</td><td>582881</td></tr><tr><td>Z</td><td>depth</td><td>Z.R</td><td>9.339670</td><td>16.919844</td><td>26.210030</td><td>0</td><td>0</td></tr></tbody></table>
+  <h2>Per-frame Diagnostics</h2>
+  <table><thead><tr><th>File</th><th>AOV</th><th>Non-black ratio</th><th>Average luminance</th><th>Maximum luminance</th><th>Non-finite values</th></tr></thead>
+  <tbody><tr><td>external_real_exr_set\frutamultilayer.exr</td><td>beauty</td><td>1.00000</td><td>0.145021</td><td>2.582599</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayer.exr</td><td>albedo</td><td>1.00000</td><td>0.190829</td><td>0.784562</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayer.exr</td><td>diffuse_direct</td><td>0.99991</td><td>0.110740</td><td>1.858245</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayer.exr</td><td>emission</td><td>0.00000</td><td>0.000000</td><td>0.000000</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayer.exr</td><td>specular_direct</td><td>0.99902</td><td>0.016994</td><td>2.443794</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayernolight.exr</td><td>beauty</td><td>0.99154</td><td>0.016279</td><td>1.169297</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayernolight.exr</td><td>albedo</td><td>1.00000</td><td>0.190828</td><td>0.784562</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayernolight.exr</td><td>diffuse_direct</td><td>0.80046</td><td>0.013057</td><td>0.203764</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayernolight.exr</td><td>emission</td><td>0.00000</td><td>0.000000</td><td>0.000000</td><td>0</td></tr><tr><td>external_real_exr_set\frutamultilayernolight.exr</td><td>specular_direct</td><td>0.79990</td><td>0.001735</td><td>1.135347</td><td>0</td></tr></tbody></table>
+  <h2>Findings</h2>
+  <table><thead><tr><th>Severity</th><th>Rule</th><th>Target</th><th>Message</th><th>Recommendation</th><th>File</th></tr></thead>
+  <tbody><tr><td><span class="severity severity-warning">WARNING</span></td><td>empty_aov</td><td>emission</td><td>No visible AOV contribution was detected in 2/2 analyzed files.</td><td>Confirm that the pass is expected to be empty. Remove it from the delivery or correct its render contribution.</td><td>2 files</td></tr></tbody></table>
+  <footer>Generated by AOVGuard. JSON remains the canonical machine-readable report.</footer>
+</main>
+</body>
+</html>
