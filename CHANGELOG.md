@@ -22,6 +22,8 @@ All notable project changes are documented here. The format follows
 - Spanish website documentation covering installation, GUI and CLI workflows,
   Cryptomatte handling, sequence ranges, presets, reports, troubleshooting,
   limitations and development verification.
+- Complete English website edition with equivalent technical content,
+  bidirectional language navigation and responsive desktop/mobile layouts.
 
 ### Verification
 

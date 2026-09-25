@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AOVGuard: quality control for OpenEXR files, AOVs, and render sequences.">
+  <title>AOVGuard | OpenEXR Quality Control</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="alternate" hreflang="es" href="index.html">
+  <link rel="alternate" hreflang="en" href="index-en.html">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#home">AOVGuard</a>
+    <nav aria-label="Main navigation">
+      <a href="#workflow">Workflow</a>
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#scope">Scope</a>
+      <a href="documentation.html">Documentation</a>
+    </nav>
+    <a class="language-switch" href="index.html" hreflang="es" lang="es" aria-label="View this site in Spanish">ES</a>
+  </header>
+
+  <main id="home">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-overlay"></div>
+      <div class="hero-content">
+        <p class="eyebrow">VFX Pipeline TD Tool</p>
+        <h1 id="hero-title">Quality control for OpenEXR</h1>
+        <p class="hero-copy">
+          AOVGuard inspects color AOVs and technical channels, analyzes render
+          sequences, and provides clear evidence before compositing or publishing.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="documentation.html">Open documentation</a>
+          <a class="button secondary" href="../docs/sample_reports/multilayer_report.html">View sample report</a>
+        </div>
+      </div>
+      <div class="hero-facts" aria-label="Verified project facts">
+        <div><strong>282</strong><span>automated tests</span></div>
+        <div><strong>95.37%</strong><span>branch-aware coverage</span></div>
+        <div><strong>1 read</strong><span>per compatible frame</span></div>
+        <div><strong>1 core</strong><span>shared by GUI and CLI</span></div>
+      </div>
+    </section>
+
+    <section class="intro band" id="workflow">
+      <div class="section-heading">
+        <p class="eyebrow">Production problem</p>
+        <h2>Validate renders before they reach compositing</h2>
+      </div>
+      <p class="lead">
+        The tool reads EXR structure directly, preserves unknown channels,
+        separates color from technical data, computes metrics with safe
+        precision, and applies configurable rules without forcing artists to
+        choose manually between simple and multilayer files.
+      </p>
+      <ol class="workflow">
+        <li><span>01</span><strong>Discover</strong><p>Find files using patterns, recursive search, depth, and frame limits.</p></li>
+        <li><span>02</span><strong>Inspect</strong><p>Describe resolution, channels, AOVs, parts, and unsupported structures.</p></li>
+        <li><span>03</span><strong>Read</strong><p>Open each compatible frame once and retain every required component.</p></li>
+        <li><span>04</span><strong>Validate</strong><p>Detect non-finite data, empty AOVs, extremes, changes, and discontinuities.</p></li>
+        <li><span>05</span><strong>Report</strong><p>Return the same evidence through the GUI, CLI, JSON, and HTML.</p></li>
+      </ol>
+    </section>
+
+    <section class="evidence band" id="features">
+      <div class="section-heading">
+        <p class="eyebrow">Current corrections</p>
+        <h2>Useful results without Cryptomatte false positives</h2>
+      </div>
+      <div class="evidence-grid">
+        <article class="evidence-item">
+          <span class="measure">Crypto</span>
+          <h3>IDs separated from color</h3>
+          <p>Standard metadata identifies Cryptomatte layers. Their IDs do not contaminate luminance or temporal outliers.</p>
+        </article>
+        <article class="evidence-item">
+          <span class="measure">1–800</span>
+          <h3>Expected range</h3>
+          <p>An inclusive range detects frames missing from the beginning or end of a delivery as well as internal gaps.</p>
+        </article>
+        <article class="evidence-item">
+          <span class="measure">float64</span>
+          <h3>Precise accumulation</h3>
+          <p>Per-channel sums and averages use 64-bit precision for HDR data and long sequences.</p>
+        </article>
+        <article class="evidence-item">
+          <span class="measure">All</span>
+          <h3>Channels preserved</h3>
+          <p>Unknown AOVs and multichannel depth, mask, or scalar passes retain every component for diagnostics.</p>
+        </article>
+      </div>
+      <p class="method-note">
+        Cryptomatte still receives objective per-channel diagnostics such as NaN
+        and infinity checks. Only interpretations that are meaningless for
+        encoded IDs, such as luminance or generic extreme magnitude, are excluded.
+      </p>
+      <div class="text-links"><a href="documentation.html#cryptomatte">How Cryptomatte is analyzed</a><a href="documentation.html#sequences">Sequence validation</a><a href="documentation.html#verification">Quality evidence</a></div>
+    </section>
+
+    <section class="product band">
+      <div class="section-heading">
+        <p class="eyebrow">Workflow for artists and TDs</p>
+        <h2>A visual interface and a CLI for automation</h2>
+      </div>
+      <figure class="product-figure">
+        <img src="assets/aovguard-current-ui.png" alt="AOVGuard interface showing metrics, findings, and sequence diagnostics">
+        <figcaption>
+          The PySide6 interface combines structural inspection, rule selection,
+          luminance and temporal-change charts, direct outlier navigation,
+          technical-channel diagnostics, sequence checks, baseline comparison,
+          and JSON/HTML export. The CLI uses the same analysis core.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="architecture band" id="architecture">
+      <div class="section-heading">
+        <p class="eyebrow">Verifiable architecture</p>
+        <h2>A pipeline built around structured data</h2>
+      </div>
+      <div class="architecture-flow" aria-label="AOVGuard architecture flow">
+        <span>EXR source</span><b>&rarr;</b><span>Discovery</span><b>&rarr;</b><span>OpenEXR reader</span><b>&rarr;</b><span>Canonical models</span><b>&rarr;</b><span>Rule engine</span><b>&rarr;</b><span>Report</span>
+      </div>
+      <div class="architecture-copy">
+        <p>
+          <code>AnalysisReport</code> is the contract between processing and
+          presentation. It contains inspections, aggregate and per-frame
+          metrics, findings, sequence diagnostics, and explicit read errors.
+        </p>
+        <p>
+          Rules are configured through TOML or JSON. The
+          <code>[aov_categories]</code> section classifies renderer- or
+          studio-specific names without losing unknown channels.
+        </p>
+      </div>
+    </section>
+
+    <section class="scope band" id="scope">
+      <div class="section-heading">
+        <p class="eyebrow">Transparent scope</p>
+        <h2>Clear capabilities and honest limitations</h2>
+      </div>
+      <div class="scope-columns">
+        <div>
+          <h3>Available now</h3>
+          <ul>
+            <li>RGB/RGBA EXRs and multilayer files with named AOVs</li>
+            <li>Color, scalar, vector, mask, depth, Cryptomatte, and unknown categories</li>
+            <li>NaN, infinities, negatives, extremes, empty AOVs, and constant channels</li>
+            <li>Continuity, duplicates, padding, and expected sequence ranges</li>
+            <li>Median, MAD, temporal change, and luminance outliers</li>
+            <li>Baseline report comparison and JSON/HTML export</li>
+            <li>Cooperative cancellation and corrupt-frame diagnostics</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Deliberate limitations</h3>
+          <ul>
+            <li>Deep EXR and full multipart analysis are detected but not processed</li>
+            <li>Cryptomatte classification depends on standard metadata or a preset</li>
+            <li>Technical passes do not receive renderer-specific artistic interpretation</li>
+            <li>Thresholds must be calibrated for each show and render setup</li>
+            <li>The tool supports artistic judgment; it does not replace it</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="run band">
+      <div class="section-heading">
+        <p class="eyebrow">Quick start</p>
+        <h2>Inspect and analyze real EXR files</h2>
+      </div>
+      <pre><code>uv sync --python 3.12 --extra dev
+uv run aovguard inspect-structure "C:\path\render.exr"
+uv run aovguard check-sequence "C:\path\renders" --expected-frame-range 1 800
+uv run aovguard analyze "C:\path\renders" --expected-frame-range 1 800 --json reports\report.json --html reports\report.html
+uv run aovguard-ui</code></pre>
+      <p class="run-note"><a href="documentation.html">Read the complete installation, usage, rules, reporting, and troubleshooting guide.</a></p>
+    </section>
+  </main>
+
+  <footer>
+    <strong>AOVGuard 1.2.1 + current corrections</strong>
+    <span>Joshua A. Medina G. &middot; MSc Computer Animation and Visual Effects &middot; 2026</span>
+    <span>MIT License</span>
+  </footer>
+</body>
+</html>
