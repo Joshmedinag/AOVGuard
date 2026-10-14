@@ -39,9 +39,9 @@
         </div>
       </div>
       <div class="hero-facts" aria-label="Datos verificados del proyecto">
-        <div><strong>282</strong><span>pruebas automatizadas</span></div>
-        <div><strong>95,37 %</strong><span>cobertura con ramas</span></div>
-        <div><strong>1 lectura</strong><span>por frame compatible</span></div>
+        <div><strong>1036</strong><span>pruebas superadas en Windows; 3 omitidas</span></div>
+        <div><strong>96,34 %</strong><span>cobertura combinada Windows/Python 3.12</span></div>
+        <div><strong>1 decodificación</strong><span>tras inspeccionar cabeceras</span></div>
         <div><strong>1 núcleo</strong><span>compartido por GUI y CLI</span></div>
       </div>
     </section>
@@ -60,7 +60,7 @@
       <ol class="workflow">
         <li><span>01</span><strong>Descubrir</strong><p>Localiza archivos con patrones, búsqueda recursiva, profundidad y límite de frames.</p></li>
         <li><span>02</span><strong>Inspeccionar</strong><p>Describe resolución, canales, AOVs, partes y estructuras no compatibles.</p></li>
-        <li><span>03</span><strong>Leer</strong><p>Abre una vez cada frame compatible y conserva todos los componentes requeridos.</p></li>
+        <li><span>03</span><strong>Leer</strong><p>Decodifica cada frame compatible una vez tras revisar cabeceras; conserva todos los canales físicos, incluidos alfa e IDs.</p></li>
         <li><span>04</span><strong>Validar</strong><p>Detecta datos no finitos, AOVs vacíos, extremos, cambios y discontinuidades.</p></li>
         <li><span>05</span><strong>Reportar</strong><p>Devuelve la misma evidencia mediante GUI, CLI, JSON y HTML.</p></li>
       </ol>
@@ -113,6 +113,8 @@
           gráfica de luminancia y cambios temporales, navegación directa a
           outliers, canales técnicos, secuencias, comparación baseline y
           exportación JSON/HTML. La CLI utiliza el mismo núcleo de análisis.
+          Captura actual reconstruida desde el JSON de Venator, con métricas
+          reales y rutas visibles anonimizadas; no es un nuevo análisis EXR.
         </figcaption>
       </figure>
     </section>
@@ -149,18 +151,24 @@
           <h3>Disponible actualmente</h3>
           <ul>
             <li>EXR RGB/RGBA y archivos multilayer con AOVs nombrados</li>
+            <li>Multipart flat con identidad, vista y ventanas independientes por parte</li>
             <li>Color, scalar, vector, mask, depth, Cryptomatte y unknown</li>
             <li>NaN, infinitos, negativos, extremos, AOVs vacíos y canales constantes</li>
             <li>Continuidad, duplicados, padding y rango esperado de secuencia</li>
             <li>Mediana, MAD, cambio temporal y outliers de luminancia</li>
             <li>Comparación con reportes baseline y exportación JSON/HTML</li>
-            <li>Cancelación cooperativa y diagnóstico de frames corruptos</li>
+            <li>Diagnóstico de frames corruptos y cancelación con limpieza de procesos</li>
+            <li>CLI base sin Qt ni OpenCV; interfaz de escritorio opcional</li>
+            <li>Control de memoria opcional: estimación por cabecera y rechazo por frame</li>
+            <li>Análisis aislado por defecto, timeout opcional y recuperación del worker</li>
           </ul>
         </div>
         <div>
           <h3>Limitaciones deliberadas</h3>
           <ul>
-            <li>Deep EXR y el análisis completo multipart se detectan, pero no se procesan</li>
+            <li>Cualquier parte deep o decodificación parcial invalida el frame completo</li>
+            <li>El lector nativo carga los píxeles de todas las partes; no ofrece streaming</li>
+            <li>El proceso aislado no es un sandbox de seguridad ni un límite RSS; sin aislamiento, cancelar espera a la lectura nativa</li>
             <li>La clasificación Cryptomatte depende de sus metadatos estándar o de un preset</li>
             <li>Los pases técnicos no reciben interpretación artística específica del renderer</li>
             <li>Los umbrales deben calibrarse para cada show y configuración de render</li>
@@ -175,17 +183,19 @@
         <p class="eyebrow">Inicio rápido</p>
         <h2>Inspeccionar y analizar EXR reales</h2>
       </div>
-      <pre><code>uv sync --python 3.12 --extra dev
+      <pre><code>uv sync --locked --python 3.12 --extra dev
 uv run aovguard inspect-structure "C:\ruta\render.exr"
 uv run aovguard check-sequence "C:\ruta\renders" --expected-frame-range 1 800
 uv run aovguard analyze "C:\ruta\renders" --expected-frame-range 1 800 --json reports\reporte.json --html reports\reporte.html
-uv run aovguard-ui</code></pre>
+uv run --extra gui aovguard-ui</code></pre>
       <p class="run-note"><a href="documentacion.html">Consulta la guía completa de instalación, uso, reglas, reportes y solución de problemas.</a></p>
+      <p><strong>Candidata 1.4.0rc1:</strong> CLI y GUI aíslan el análisis por defecto y reutilizan un proceso hijo secuencial. Usa <code>--frame-timeout-seconds 60</code> para limitar cada frame desde que el hijo está listo, o <code>--in-process</code> para desactivar el aislamiento sin timeout. <code>--max-memory-mb 4096</code> activa la estimación de todas las partes y canales. Son controles de ejecución, no un sandbox ni un límite RSS duro. Los paquetes estables 1.3.0 se conservan separados.</p>
+      <p>Verificación local de la candidata: 1036 pruebas superadas, 3 omitidas y 96,34 % de cobertura en Windows/Python 3.12.12. Los renders de Maya y Venator se leyeron completos, con advertencias de contribución conservadas y coincidencia CLI/GUI. El verificador reproducible permite repetir estas comprobaciones sin distribuir EXR. <a href="documentacion.html#verificacion">Ver resultados y límites</a> o <a href="https://github.com/Joshmedinag/AOVGuard/actions">consultar CI por revisión</a>.</p>
     </section>
   </main>
 
   <footer>
-    <strong>AOVGuard 1.2.1 + correcciones actuales</strong>
+    <strong>AOVGuard</strong>
     <span>Joshua A. Medina G. &middot; MSc Computer Animation and Visual Effects &middot; 2026</span>
     <span>Licencia MIT</span>
   </footer>

@@ -78,6 +78,24 @@ empty_max_luminance = 0.00001
 enabled = true
 severity = "error"
 
+# Opt-in project policy, not automatic renderer-specific semantics.
+# Targets are EXACT case-sensitive inspected names; quote multipart keys such
+# as "[part:left]::Z". Every component is checked. Adapt names/units first.
+[rules.technical_range]
+enabled = false
+severity = "warning"
+
+[rules.technical_range.parameters.ranges.Z]
+min = 0.0
+# max = 10000.0 # Set only when the project's depth units/range are known.
+tolerance = 0.0
+
+# Add a real mask AOV name, classified with [aov_categories] if necessary:
+# [rules.technical_range.parameters.ranges.matte]
+# min = 0.0
+# max = 1.0
+# tolerance = 0.000001
+
 [rules.aov_structure_mismatch]
 enabled = true
 severity = "error"

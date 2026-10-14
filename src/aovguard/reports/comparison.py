@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import math
+import posixpath
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+
+from aovguard.io.output import atomic_text_writer
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +35,11 @@ class ReportComparison:
     metric_deltas: tuple[AOVMetricDelta, ...]
     new_findings: tuple[Mapping[str, Any], ...]
     resolved_findings: tuple[Mapping[str, Any], ...]
+    warnings: tuple[str, ...] = ()
 
     @property
     def changed_aov_count(self) -> int:
-        """Return the number of added, removed or changed AOVs."""
+        """Return the number of AOVs not verified as numerically unchanged."""
 
         return sum(delta.status != "unchanged" for delta in self.metric_deltas)
 
@@ -51,13 +56,17 @@ def load_report_payload(path: str | Path) -> dict[str, Any]:
         raise ValueError(f"AOVGuard report {report_path} must contain a JSON object.")
     if "metadata" not in payload or "metrics_by_aov" not in payload:
         raise ValueError(f"JSON file {report_path} is not a canonical AOVGuard analysis report.")
+    _validate_schema(payload)
     return payload
 
 
 def _number(value: object) -> float | None:
-    if not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
     return number if math.isfinite(number) else None
 
 
@@ -66,13 +75,231 @@ def _difference(candidate: object, baseline: object) -> float | None:
     baseline_number = _number(baseline)
     if candidate_number is None or baseline_number is None:
         return None
-    return candidate_number - baseline_number
+    difference = candidate_number - baseline_number
+    return difference if math.isfinite(difference) else None
 
 
-def _finding_key(finding: Mapping[str, Any]) -> tuple[str, ...]:
-    return tuple(
-        str(finding.get(name) or "") for name in ("rule_id", "severity", "aov", "channel", "file")
+def _json_safe(value: Any) -> Any:
+    """Sanitize non-finite numbers while rejecting non-JSON evidence values."""
+
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    raise ValueError(f"Report evidence contains a non-JSON value: {type(value).__name__}.")
+
+
+def _canonical_json(value: Any) -> str:
+    def normalize(item: Any) -> Any:
+        if isinstance(item, float) and item.is_integer():
+            return int(item)
+        if isinstance(item, dict):
+            return {key: normalize(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [normalize(child) for child in item]
+        return item
+
+    return json.dumps(
+        normalize(_json_safe(value)), sort_keys=True, separators=(",", ":"), allow_nan=False
     )
+
+
+def _validate_schema(payload: Mapping[str, Any]) -> None:
+    version = payload.get("schema_version")
+    if version not in ("1.0", "1.1", "1.2"):
+        raise ValueError(
+            f"Unsupported AOVGuard report schema_version {version!r}; expected 1.0, 1.1 or 1.2."
+        )
+
+
+def _metadata(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("Report metadata values must be JSON objects.")
+    return metadata
+
+
+def _semantic_option(name: str, value: Any) -> Any:
+    if name == "luminance_weights":
+        if (
+            not isinstance(value, (list, tuple))
+            or len(value) != 3
+            or any(_number(weight) is None for weight in value)
+        ):
+            raise ValueError("Report luminance_weights must contain three finite numbers.")
+        return [float(weight) for weight in value]
+    if name == "non_black_threshold":
+        number = _number(value)
+        if number is None:
+            raise ValueError("Report non_black_threshold must be a finite number.")
+        return number
+    if not isinstance(value, Mapping):
+        raise ValueError("Report aov_category_overrides values must be JSON objects.")
+    if any(not isinstance(key, str) or not isinstance(category, str) for key, category in value.items()):
+        raise ValueError("Report aov_category_overrides must map AOV names to category strings.")
+    # Match the reader's case-insensitive, last-key-wins preset semantics.
+    return {key.casefold(): category.lower() for key, category in value.items()}
+
+
+def _effective_rules(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(rule, Mapping) for rule in value
+    ):
+        raise ValueError("Report effective_rules values must be JSON arrays of rule objects.")
+    rules: list[dict[str, Any]] = []
+    for rule in value:
+        sanitized = _json_safe(rule)
+        if not isinstance(sanitized.get("id"), str):
+            raise ValueError("Report effective_rules entries must have a string id.")
+        supported_types = sanitized.get("supported_aov_types")
+        if supported_types is not None:
+            if not isinstance(supported_types, list) or any(
+                not isinstance(category, str) for category in supported_types
+            ):
+                raise ValueError("Report supported_aov_types must contain category strings.")
+            sanitized["supported_aov_types"] = sorted(set(supported_types))
+        # Disabled definitions have no semantic effect. Adding a new opt-in
+        # rule must not invalidate otherwise identical historical baselines.
+        if sanitized.get("enabled") is not False:
+            rules.append(sanitized)
+    return sorted(rules, key=lambda rule: rule["id"])
+
+
+def _compatibility_warnings(
+    baseline_metadata: Mapping[str, Any],
+    candidate_metadata: Mapping[str, Any],
+) -> tuple[str, ...]:
+    unavailable: list[str] = []
+    baseline_options = baseline_metadata.get("options")
+    candidate_options = candidate_metadata.get("options")
+    for label, options in (("baseline", baseline_options), ("candidate", candidate_options)):
+        if options is None:
+            unavailable.append(f"{label} options")
+        elif not isinstance(options, Mapping):
+            raise ValueError("Report metadata.options values must be JSON objects or null.")
+
+    if isinstance(baseline_options, Mapping) and isinstance(candidate_options, Mapping):
+        for name in ("luminance_weights", "non_black_threshold", "aov_category_overrides"):
+            if name not in baseline_options or name not in candidate_options:
+                unavailable.append(name)
+                continue
+            baseline_value = _semantic_option(name, baseline_options[name])
+            candidate_value = _semantic_option(name, candidate_options[name])
+            if _canonical_json(baseline_value) != _canonical_json(candidate_value):
+                raise ValueError(f"Incompatible analysis configuration: {name} differs.")
+
+    for name in ("source_kind", "effective_rules"):
+        baseline_value = baseline_metadata.get(name)
+        candidate_value = candidate_metadata.get(name)
+        if baseline_value is None or candidate_value is None:
+            unavailable.append(name)
+            continue
+        if name == "effective_rules":
+            baseline_value = _effective_rules(baseline_value)
+            candidate_value = _effective_rules(candidate_value)
+        if _canonical_json(baseline_value) != _canonical_json(candidate_value):
+            raise ValueError(f"Incompatible analysis configuration: {name} differs.")
+    baseline_region = baseline_metadata.get("measurement_region")
+    candidate_region = candidate_metadata.get("measurement_region")
+    if (
+        baseline_region is not None
+        and candidate_region is not None
+        and baseline_region != candidate_region
+    ):
+        raise ValueError("Incompatible analysis configuration: measurement_region differs.")
+    if not unavailable:
+        return ()
+    return (
+        "Analysis compatibility could not be fully verified because configuration is missing: "
+        + ", ".join(unavailable)
+        + ".",
+    )
+
+
+def _relative_finding_path(value: Any, source: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("Finding file and affected_files values must be strings or null.")
+    path = posixpath.normpath(value.replace("\\", "/"))
+    if not source:
+        return path
+    root = posixpath.normpath(source.replace("\\", "/"))
+    windows_path = "\\" in source or (len(root) > 1 and root[1] == ":")
+    path_identity = path.casefold() if windows_path else path
+    root_identity = root.casefold() if windows_path else root
+    if path_identity == root_identity:
+        return "."
+    if root.casefold().endswith(".exr"):
+        root = posixpath.dirname(root)
+        root_identity = root.casefold() if windows_path else root
+    prefix = root_identity.rstrip("/") + "/"
+    if path_identity.startswith(prefix):
+        return path[len(prefix) :]
+    return path
+
+
+def _finding_metrics(finding: Mapping[str, Any], source: str) -> Any:
+    metrics = _json_safe(finding.get("metrics", {}))
+    if not isinstance(metrics, Mapping):
+        raise ValueError("Finding metrics values must be JSON objects.")
+    normalized = dict(metrics)
+    if "baseline_file" in metrics:
+        normalized["baseline_file"] = _relative_finding_path(metrics["baseline_file"], source)
+    per_frame = metrics.get("per_frame")
+    if per_frame is not None:
+        if not isinstance(per_frame, Mapping):
+            raise ValueError("Finding per_frame evidence must be a JSON object.")
+        normalized["per_frame"] = {
+            _relative_finding_path(path, source): values for path, values in per_frame.items()
+        }
+    files = metrics.get("files")
+    if files is not None:
+        if not isinstance(files, (list, tuple)):
+            raise ValueError("Finding files evidence must be a JSON array.")
+        paths: list[str] = []
+        for path in files:
+            relative = _relative_finding_path(path, source)
+            if relative is None:
+                raise ValueError("Finding files evidence must contain file paths.")
+            paths.append(relative)
+        normalized["files"] = sorted(paths)
+    return normalized
+
+
+def _finding_key(finding: Mapping[str, Any], source: str) -> str:
+    affected_files = finding.get("affected_files", [])
+    if not isinstance(affected_files, (list, tuple)):
+        raise ValueError("Finding affected_files values must be JSON arrays.")
+    paths: list[str] = []
+    for path in affected_files:
+        normalized = _relative_finding_path(path, source)
+        if normalized is None:
+            raise ValueError("Finding affected_files must contain file paths.")
+        paths.append(normalized)
+    evidence = {
+        name: finding.get(name) for name in ("rule_id", "severity", "aov", "channel")
+    }
+    evidence["file"] = _relative_finding_path(finding.get("file"), source)
+    evidence["affected_files"] = sorted(set(paths))
+    evidence["metrics"] = _finding_metrics(finding, source)
+    return _canonical_json(evidence)
+
+
+def _findings_by_key(payload: Mapping[str, Any], source: str) -> dict[str, Mapping[str, Any]]:
+    findings = payload.get("findings", [])
+    if not isinstance(findings, list):
+        raise ValueError("Report findings values must be JSON arrays.")
+    result: dict[str, Mapping[str, Any]] = {}
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            raise ValueError("Report findings entries must be JSON objects.")
+        result[_finding_key(finding, source)] = _json_safe(finding)
+    return result
 
 
 def compare_report_payloads(
@@ -81,10 +308,20 @@ def compare_report_payloads(
     *,
     tolerance: float = 1e-12,
 ) -> ReportComparison:
-    """Compare canonical report payloads with a numeric tolerance."""
+    """Compare compatible reports and mark missing numeric evidence unavailable.
 
-    if tolerance < 0 or not math.isfinite(tolerance):
+    Legacy reports without configuration remain readable, with a warning that
+    compatibility could not be fully verified. Conflicting recorded settings or
+    unsupported schema versions fail explicitly rather than returning a delta.
+    """
+
+    if isinstance(tolerance, bool) or tolerance < 0 or not math.isfinite(tolerance):
         raise ValueError("Comparison tolerance must be finite and non-negative.")
+    _validate_schema(baseline)
+    _validate_schema(candidate)
+    baseline_metadata = _metadata(baseline)
+    candidate_metadata = _metadata(candidate)
+    warnings = _compatibility_warnings(baseline_metadata, candidate_metadata)
     baseline_metrics = baseline.get("metrics_by_aov", {})
     candidate_metrics = candidate.get("metrics_by_aov", {})
     if not isinstance(baseline_metrics, Mapping) or not isinstance(candidate_metrics, Mapping):
@@ -114,12 +351,15 @@ def compare_report_payloads(
             candidate_values.get("max_luminance"),
             baseline_values.get("max_luminance"),
         )
-        finite_deltas = (
-            value for value in (average_delta, ratio_delta, maximum_delta) if value is not None
-        )
-        status = (
-            "changed" if any(abs(value) > tolerance for value in finite_deltas) else "unchanged"
-        )
+        values = (average_delta, ratio_delta, maximum_delta)
+        if any(value is None for value in values):
+            status = "unavailable"
+        else:
+            status = (
+                "changed"
+                if any(abs(value) > tolerance for value in values if value is not None)
+                else "unchanged"
+            )
         deltas.append(
             AOVMetricDelta(
                 aov=str(aov_name),
@@ -130,30 +370,13 @@ def compare_report_payloads(
             )
         )
 
-    baseline_findings = baseline.get("findings", [])
-    candidate_findings = candidate.get("findings", [])
-    if not isinstance(baseline_findings, list) or not isinstance(candidate_findings, list):
-        raise ValueError("Report findings values must be JSON arrays.")
-    baseline_by_key = {
-        _finding_key(finding): finding
-        for finding in baseline_findings
-        if isinstance(finding, Mapping)
-    }
-    candidate_by_key = {
-        _finding_key(finding): finding
-        for finding in candidate_findings
-        if isinstance(finding, Mapping)
-    }
-
-    baseline_metadata = baseline.get("metadata", {})
-    candidate_metadata = candidate.get("metadata", {})
-    if not isinstance(baseline_metadata, Mapping):
-        baseline_metadata = {}
-    if not isinstance(candidate_metadata, Mapping):
-        candidate_metadata = {}
+    baseline_source = str(baseline_metadata.get("source") or "")
+    candidate_source = str(candidate_metadata.get("source") or "")
+    baseline_by_key = _findings_by_key(baseline, baseline_source)
+    candidate_by_key = _findings_by_key(candidate, candidate_source)
     return ReportComparison(
-        baseline_source=str(baseline_metadata.get("source") or ""),
-        candidate_source=str(candidate_metadata.get("source") or ""),
+        baseline_source=baseline_source,
+        candidate_source=candidate_source,
         baseline_status=str(baseline_metadata.get("status") or "unknown"),
         candidate_status=str(candidate_metadata.get("status") or "unknown"),
         metric_deltas=tuple(deltas),
@@ -164,6 +387,7 @@ def compare_report_payloads(
         resolved_findings=tuple(
             baseline_by_key[key] for key in sorted(baseline_by_key.keys() - candidate_by_key.keys())
         ),
+        warnings=warnings,
     )
 
 
@@ -185,7 +409,7 @@ def compare_report_files(
 def build_comparison_payload(comparison: ReportComparison) -> dict[str, Any]:
     """Convert a comparison result to a JSON-compatible payload."""
 
-    return {
+    payload = {
         "schema_version": "1.0",
         "baseline": {
             "source": comparison.baseline_source,
@@ -213,18 +437,21 @@ def build_comparison_payload(comparison: ReportComparison) -> dict[str, Any]:
         ],
         "new_findings": [dict(finding) for finding in comparison.new_findings],
         "resolved_findings": [dict(finding) for finding in comparison.resolved_findings],
+        "warnings": list(comparison.warnings),
     }
+    return _json_safe(payload)
 
 
 def write_comparison_json(
     comparison: ReportComparison,
     output_path: str | Path,
+    *,
+    protected_paths: Iterable[str | Path] = (),
 ) -> None:
-    """Write a strict comparison payload to UTF-8 JSON."""
+    """Atomically publish strict JSON; pass baseline/candidate files as protected paths."""
 
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(build_comparison_payload(comparison), indent=2, allow_nan=False),
-        encoding="utf-8",
+    sources = tuple(
+        value for value in (comparison.baseline_source, comparison.candidate_source) if value
     )
+    with atomic_text_writer(output_path, protected_paths=(*sources, *protected_paths)) as handle:
+        json.dump(build_comparison_payload(comparison), handle, indent=2, allow_nan=False)

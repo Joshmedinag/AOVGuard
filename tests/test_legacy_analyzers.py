@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import cv2
 import Imath
 import numpy as np
 import OpenEXR
@@ -124,27 +123,55 @@ def test_legacy_multilayer_read_reports_missing_channel(tmp_path: Path) -> None:
         _read_rgb_aov(path, "diffuse")
 
 
-def test_simple_reader_handles_grayscale_and_rgba(monkeypatch: pytest.MonkeyPatch) -> None:
-    grayscale = np.ones((2, 2), dtype=np.float16)
-    monkeypatch.setattr(cv2, "imread", lambda *args: grayscale)
-    gray_result = _read_exr(Path("gray.exr"))
+@pytest.mark.parametrize("dtype", [np.float16, np.float32])
+def test_simple_reader_handles_grayscale_and_rgba(tmp_path: Path, dtype) -> None:
+    grayscale_path = tmp_path / "gray.exr"
+    grayscale = np.full((2, 2), 0.5, dtype=dtype)
+    OpenEXR.File({}, {"Y": grayscale}).write(str(grayscale_path))
+    gray_result = _read_exr(grayscale_path)
     assert gray_result.shape == (2, 2, 3)
     assert gray_result.dtype == np.float32
+    np.testing.assert_allclose(gray_result, 0.5)
 
-    rgba = np.ones((2, 2, 4), dtype=np.float32)
-    monkeypatch.setattr(cv2, "imread", lambda *args: rgba)
-    rgba_result = _read_exr(Path("rgba.exr"))
+    rgba_path = _write_exr(
+        tmp_path / "rgba.exr", {"R": 1.0, "G": 2.0, "B": 3.0, "A": 0.0}
+    )
+    rgba_result = _read_exr(rgba_path)
     assert rgba_result.shape == (2, 2, 3)
+    np.testing.assert_allclose(rgba_result, np.tile([3.0, 2.0, 1.0], (2, 2, 1)))
+    result = analyze_simple(tmp_path)
+    rgba_metrics = next(row for row in result if row.aov_name == "rgba")
+    assert rgba_metrics.avg_luminance == pytest.approx(1.8596)
 
 
-def test_simple_reader_wraps_opencv_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail(*args):
-        raise cv2.error("decode failed")
+def test_simple_reader_wraps_openexr_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(*args, **kwargs):
+        raise RuntimeError("decode failed")
 
-    monkeypatch.setattr(cv2, "imread", fail)
+    monkeypatch.setattr(OpenEXR, "File", fail)
 
     with pytest.raises(RuntimeError, match="Could not read EXR"):
         _read_exr(Path("broken.exr"))
+
+
+def test_simple_reader_rejects_multipart_without_truncating(tmp_path: Path) -> None:
+    path = tmp_path / "multipart.exr"
+    channels = {name: np.ones((2, 2), np.float32) for name in ("R", "G", "B")}
+    OpenEXR.File([
+        OpenEXR.Part({}, channels, "left"),
+        OpenEXR.Part({}, channels, "right"),
+    ]).write(str(path))
+
+    with pytest.raises(RuntimeError, match="Could not read EXR") as error:
+        _read_exr(path)
+    assert "single-part" in str(error.value.__cause__)
+
+
+def test_simple_reader_rejects_non_rgb_or_grayscale_channels(tmp_path: Path) -> None:
+    path = _write_exr(tmp_path / "technical.exr", {"N.X": 1.0, "N.Y": 0.0})
+
+    with pytest.raises(RuntimeError, match="Could not read EXR"):
+        _read_exr(path)
 
 
 def test_simple_nested_analysis_groups_frames_and_reports_progress(tmp_path: Path) -> None:
@@ -155,14 +182,8 @@ def test_simple_nested_analysis_groups_frames_and_reports_progress(tmp_path: Pat
     empty.mkdir()
     ignored.mkdir()
     for frame_number in (1001, 1002):
-        assert cv2.imwrite(
-            str(key / f"key.{frame_number}.exr"),
-            np.ones((2, 2, 3), dtype=np.float32),
-        )
-        assert cv2.imwrite(
-            str(empty / f"empty.{frame_number}.exr"),
-            np.zeros((2, 2, 3), dtype=np.float32),
-        )
+        _write_exr(key / f"key.{frame_number}.exr", {"R": 1.0, "G": 1.0, "B": 1.0})
+        _write_exr(empty / f"empty.{frame_number}.exr", {"R": 0.0, "G": 0.0, "B": 0.0})
     progress: list[tuple[int, int, str]] = []
 
     results = analyze_simple(

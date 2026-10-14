@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Callable
 
-os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
-
-import cv2
 import numpy as np
+import OpenEXR
 
 from aovguard.analysis_core import AOVResult, Thresholds, classify
 from aovguard.core.channel_utils import normalize_color_to_rgb
@@ -19,22 +16,40 @@ ProgressCallback = Callable[[int, int, str], None]
 
 
 def _read_exr(path: Path) -> np.ndarray:
+    """Decode root RGB/RGBA or Y data while preserving the legacy BGR contract."""
+
     try:
-        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-    except cv2.error as exc:
+        with OpenEXR.File(str(path), separate_channels=True, header_only=True) as header:
+            if len(header.parts) != 1:
+                raise ValueError("Legacy simple analysis requires a single-part EXR.")
+            if header.parts[0].type() in {OpenEXR.deepscanline, OpenEXR.deeptile}:
+                raise ValueError("Legacy simple analysis does not support deep EXR data.")
+        with OpenEXR.File(str(path), separate_channels=True) as exr:
+            channels = exr.channels()
+            root = {name.lower(): name for name in channels if "." not in name}
+            rgb = tuple(
+                next((root[name] for name in aliases if name in root), None)
+                for aliases in (("r", "red"), ("g", "green"), ("b", "blue"))
+            )
+            if all(name is not None for name in rgb):
+                # Retain BGR for the private adapter and its historical callers.
+                image = np.stack(
+                    [channels[name].pixels for name in reversed(rgb) if name is not None],
+                    axis=-1,
+                )
+            elif "y" in root:
+                gray = channels[root["y"]].pixels
+                image = np.stack([gray, gray, gray], axis=-1)
+            else:
+                raise ValueError("Legacy simple analysis requires root RGB or Y channels.")
+            return image.astype(np.float32, copy=False)
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
         raise RuntimeError(f"Could not read EXR: {path}") from exc
-    if img is None:
-        raise RuntimeError(f"Could not read EXR: {path}")
-    if img.ndim == 2:
-        img = np.stack([img, img, img], axis=-1)
-    if img.shape[-1] >= 3:
-        img = img[..., :3]
-    return img.astype(np.float32)
 
 
 def _compute_metrics(image: np.ndarray) -> tuple[float, float, float]:
-    # OpenCV loads RGB/RGBA EXR files as BGR/BGRA. Convert once to the internal
-    # RGB convention before computing luminance.
+    # The legacy reader adapter returns BGR. Convert once to the shared RGB
+    # convention before computing luminance.
     image_rgb = normalize_color_to_rgb(image, source_order="BGR")
     luminance = compute_luminance(image_rgb)
     non_black_ratio = float(np.count_nonzero(luminance > 1e-5) / luminance.size)

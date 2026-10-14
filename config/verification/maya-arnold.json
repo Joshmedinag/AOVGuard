@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "description": "Observed Maya/Arnold guarida3 sequence, frames 1-301, linear Rec.709 selected by the original verification. Cryptomatte is retained outside luminance metrics.",
+  "metadata": {
+    "status": "warning",
+    "frames_discovered": 301,
+    "frames_processed": 301,
+    "frames_failed": 0,
+    "aovs_detected": 17,
+    "color_aovs_analyzed": 7,
+    "technical_aovs_diagnosed": 10,
+    "summary_by_aov_category": {"color": 7, "depth": 1, "vector": 1, "cryptomatte": 8},
+    "summary_by_severity": {"warning": 1}
+  },
+  "dimensions": [1920, 1080],
+  "channel_count": 56,
+  "findings": [{"rule_id": "empty_aov", "severity": "warning", "aov": "volume"}],
+  "outliers_by_aov": {}
+}

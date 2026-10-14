@@ -20,6 +20,7 @@ from aovguard.core.models import (
     AOVDescriptor,
     ChannelMetricSet,
     FileInspection,
+    FrameExecutionRecord,
     MetricSet,
     SourceMode,
 )
@@ -201,7 +202,7 @@ def test_canonical_json_is_strict_with_non_finite_metrics(tmp_path: Path) -> Non
     )
     assert "NaN" not in text
     assert "Infinity" not in text
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "1.2"
     assert payload["metadata"]["frames_discovered"] == 1
     assert payload["metadata"]["frames_processed"] == 0
     assert payload["metadata"]["frames_failed"] == 1
@@ -274,3 +275,119 @@ def test_report_version_falls_back_for_uninstalled_source_package(
     monkeypatch.setattr(json_report.metadata, "version", missing_version)
 
     assert json_report._version() == "unknown"
+
+
+def test_report_memory_budget_is_additive_for_schema_12_and_old_baselines() -> None:
+    from copy import deepcopy
+
+    from aovguard.reports.comparison import compare_report_payloads
+    from aovguard.reports.html_report import build_analysis_html
+
+    report = AnalysisReport(source=Path("renders"), frames=(), inspections=(), metrics_by_aov={})
+    payload = build_analysis_report_payload(report, options=AnalysisOptions())
+    assert payload["schema_version"] == "1.2"
+    assert payload["metadata"]["options"]["max_memory_mb"] is None
+    assert payload["memory_estimates"] == {}
+    assert payload["metadata"]["memory_estimation"]["budget_unit"] == "MiB"
+    assert payload["metadata"]["memory_estimation"]["bytes_per_mib"] == 1024 * 1024
+    assert "not a hard" in payload["metadata"]["memory_estimation"]["caveat"]
+
+    legacy = deepcopy(payload)
+    legacy["metadata"]["options"].pop("max_memory_mb")
+    legacy["metadata"].pop("memory_estimation")
+    legacy.pop("memory_estimates")
+    comparison = compare_report_payloads(legacy, payload)
+    assert comparison.warnings == ()
+    assert comparison.changed_aov_count == 0
+    budgeted = build_analysis_report_payload(report, options=AnalysisOptions(max_memory_mb=12.5))
+    assert compare_report_payloads(legacy, budgeted).warnings == ()
+    assert "Memory estimate budget: <strong>Unlimited</strong>" in build_analysis_html(
+        report, options=AnalysisOptions()
+    )
+
+
+def test_memory_report_preserves_breakdown_and_exact_large_budget_decision() -> None:
+    from dataclasses import replace
+
+    from aovguard.core.memory import MEMORY_MODEL_VERSION, MIB_BYTES, estimate_frame_memory
+    from aovguard.reports.html_report import build_analysis_html
+
+    frame = Path("frame<script>.exr")
+    inspection = FileInspection(frame, 2, 2, ("R", "G", "B"), ())
+    estimate = estimate_frame_memory(inspection)
+    exact_bytes = (1 << 54) + 1
+    estimate = replace(estimate, estimated_bytes=exact_bytes, estimated_mib=exact_bytes / MIB_BYTES)
+    report = AnalysisReport(
+        source=frame, frames=(frame,), inspections=(inspection,), metrics_by_aov={},
+        failed_frames=(frame,), memory_estimates={frame: estimate},
+    )
+    options = AnalysisOptions(max_memory_mb=(1 << 54) / MIB_BYTES)
+
+    payload = build_analysis_report_payload(report, options=options)
+    stored = payload["memory_estimates"][str(frame)]
+    assert stored["estimated_bytes"] == exact_bytes
+    assert stored["native_channel_bytes"] == 2 * 2 * 3 * 4
+    assert stored["fixed_reserve_bytes"] == 64 * MIB_BYTES
+    assert stored["model_version"] == MEMORY_MODEL_VERSION
+    assert payload["metadata"]["memory_estimation"]["model_version"] == MEMORY_MODEL_VERSION
+    # Display rounding hides the single excess byte; admission and reporting must not.
+    assert estimate.estimated_mib == options.max_memory_mb
+    document = build_analysis_html(report, options=options)
+    assert "Blocked by estimate budget" in document
+    assert "frame&lt;script&gt;.exr" in document
+    assert "frame<script>.exr" not in document
+    assert "Budget not recorded" in build_analysis_html(report)
+
+
+def test_execution_diagnostics_are_additive_and_do_not_change_baseline_semantics() -> None:
+    from copy import deepcopy
+
+    from aovguard.reports.comparison import compare_report_payloads
+    from aovguard.reports.html_report import build_analysis_html
+
+    frame = Path("frame<script>.exr")
+    record = FrameExecutionRecord(
+        mode="isolated", status="completed", worker_pid=12345, elapsed_seconds=0.25,
+        timeout_seconds=2.0, exit_code=None, stage="measurement",
+    )
+    report = AnalysisReport(
+        source=frame, frames=(frame,), inspections=(),
+        metrics_by_aov={"beauty": MetricSet(1.0, 1.0, 1.0, pixel_count=4)},
+        frame_execution={frame: record},
+    )
+    payload = build_analysis_report_payload(
+        report, options=AnalysisOptions(isolate_frames=True, frame_timeout_seconds=2.0)
+    )
+    assert payload["schema_version"] == "1.2"
+    assert payload["metadata"]["options"]["isolate_frames"] is True
+    assert payload["metadata"]["options"]["frame_timeout_seconds"] == 2.0
+    assert payload["frame_execution"][str(frame)] == {
+        "mode": "isolated", "status": "completed", "worker_pid": 12345,
+        "elapsed_seconds": 0.25, "timeout_seconds": 2.0, "exit_code": None,
+        "stage": "measurement",
+    }
+    legacy = deepcopy(payload)
+    legacy.pop("frame_execution")
+    legacy["metadata"]["options"].pop("isolate_frames")
+    legacy["metadata"]["options"].pop("frame_timeout_seconds")
+    comparison = compare_report_payloads(legacy, payload)
+    assert comparison.changed_aov_count == 0
+    assert comparison.new_findings == ()
+    assert comparison.warnings == ()
+    changed_execution = deepcopy(payload)
+    changed_execution["frame_execution"][str(frame)]["worker_pid"] = 99999
+    changed_execution["frame_execution"][str(frame)]["elapsed_seconds"] = 9.0
+    changed_execution["metadata"]["options"]["isolate_frames"] = False
+    changed_execution["metadata"]["options"]["frame_timeout_seconds"] = None
+    assert compare_report_payloads(payload, changed_execution).changed_aov_count == 0
+    document = build_analysis_html(
+        report, options=AnalysisOptions(isolate_frames=True, frame_timeout_seconds=2.0)
+    )
+    assert "Frame Execution Diagnostics" in document
+    assert "12345" in document
+    assert "0.250" in document
+    assert "measurement" in document
+    assert "not a security sandbox or a hard RSS cap" in document
+    assert "Startup and termination cleanup use separate" in document
+    assert "frame&lt;script&gt;.exr" in document
+    assert "frame<script>.exr" not in document

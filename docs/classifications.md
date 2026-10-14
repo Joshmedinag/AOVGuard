@@ -2,7 +2,7 @@
 
 This document describes the threshold labels produced by the temporary
 `analyze-simple` and `analyze-multilayer` compatibility commands. The canonical
-AOVGuard 2.0 backend returns metrics and configurable rule findings instead.
+AOVGuard canonical backend returns metrics and configurable rule findings instead.
 
 AOVGuard classifies each AOV using simple luminance statistics. The goal is not to make a final artistic decision, but to flag passes that should be kept, reviewed, or removed from a publish.
 

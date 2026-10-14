@@ -31,6 +31,7 @@ evidence connected to research questions.
 
 - Architecture and reader protocol.
 - Canonical models and data flow.
+- Multipart identities, original part metadata and separate windows.
 - EXR inspection and AOV categorisation heuristics.
 - RGB normalisation and luminance.
 - Frame discovery and sequence model.
@@ -49,7 +50,8 @@ evidence connected to research questions.
 ## 6. Evaluation
 
 - Correctness using known synthetic fixtures.
-- Coverage baseline and final branch coverage.
+- Coverage baseline and final combined statement/branch coverage, with a
+  separate branch-only result only when actually measured.
 - Frame-first benchmark method and results.
 - CLI/GUI equivalence.
 - Usability evaluation or expert review.
@@ -61,7 +63,8 @@ evidence connected to research questions.
 - Performance/memory trade-off.
 - Naming and category ambiguity.
 - False positives and artistic context.
-- Platform, packaging, deep and multipart limitations.
+- Platform, optional desktop packaging, deep sample limitations and ambiguous
+  multipart index/cardinality transitions.
 - Threats to validity.
 
 ## 8. Conclusion and Future Work

@@ -282,6 +282,13 @@ footer {
 .docs-content table { width: 100%; border-collapse: collapse; }
 .docs-content th, .docs-content td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
 .docs-content th { background: #e8edf0; }
+.verification-table { max-width: 100%; overflow-x: auto; }
+.verification-table table { min-width: 560px; }
+.verification-table caption { text-align: left; padding-bottom: 12px; }
+.verification-table:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.verification-figure { margin: 24px 0; }
+.verification-figure img { display: block; width: 100%; height: auto; }
+.verification-figure figcaption { margin-top: 12px; color: var(--muted); font-size: 14px; }
 
 .docs-hero { color: var(--white); background: var(--charcoal); }
 .docs-hero .eyebrow { color: #72d1ae; }

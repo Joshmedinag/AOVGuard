@@ -57,6 +57,11 @@ LUMINANCE_MODEL_TOOLTIPS = {
         "Rec.601 luminance uses 0.299 R + 0.587 G + 0.114 B. "
         "Choose it when this weighting matches the evaluation requirement."
     ),
+    "ACEScg": (
+        "Relative Y for scene-linear ACEScg/AP1 RGB: 0.2722287168 R + "
+        "0.6740817658 G + 0.0536895174 B. Select it only when the input "
+        "is ACEScg; it does not transform or detect the input color space."
+    ),
     "Custom": (
         "Custom luminance uses the R, G and B weights entered beside this menu. "
         "Weights must be finite and have a positive total."

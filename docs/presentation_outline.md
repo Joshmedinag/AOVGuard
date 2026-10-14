@@ -1,4 +1,4 @@
-# AOVGuard 2.0 Presentation Outline
+# AOVGuard 1.3.0 Presentation Outline
 
 Target duration: 15 minutes, followed by questions.
 
@@ -6,7 +6,7 @@ Target duration: 15 minutes, followed by questions.
 
 **Visual:** AOVGuard GUI with a completed multilayer analysis.
 
-**Key point:** AOVGuard 2.0 validates EXR structure and AOV data before renders
+**Key point:** AOVGuard 1.3.0 validates EXR structure and AOV data before renders
 move from lighting into compositing or publishing.
 
 ## Slide 2 - Production problem (0:45-2:00)
@@ -52,13 +52,14 @@ move from lighting into compositing or publishing.
 - Root RGB becomes `beauty`.
 - Named RGB groups become colour AOVs.
 - Z, N and P are recognised as depth/vector data.
-- Deep and multipart structures are reported as unsupported instead of being
-  silently interpreted.
+- Flat multipart parts are analyzed independently under qualified identities;
+  any deep part or partial decode rejects the whole file/frame.
+- Each part preserves source names, views and separate data/display windows.
 
 ## Slide 7 - Canonical RGB and luminance (6:30-7:30)
 
 - Reader output is normalised to RGB by channel name.
-- One central luminance implementation supports Rec.709, Rec.601 and custom
+- One central luminance implementation supports Rec.709, Rec.601, ACEScg and custom
   weights.
 - NaN and Inf are counted explicitly and excluded from finite aggregates.
 - Luminance rules only target colour AOVs.
@@ -77,12 +78,13 @@ move from lighting into compositing or publishing.
 
 **Visual:** Benchmark table from `docs/benchmark_results.md`.
 
-- Test dataset: 12 frames, 5 AOVs, 320 x 180, three repetitions.
+- Historical dataset: 12 frames, 5 AOVs, 320 x 180, 30 repetitions.
 - Reader calls reduced from 60 to 12.
 - Pixel checksum remained identical.
-- Recorded median changed from 0.3255 s to 0.0800 s on the test machine.
+- Historical median changed from 0.4387 s to 0.1181 s on the test machine.
 - Python-tracked peak memory increased because all AOVs for one frame coexist;
   native memory is not included.
+- This predates 1.3.0 and does not establish streaming or lower native RSS.
 
 ## Slide 10 - CLI, GUI and reports (10:00-11:30)
 
@@ -99,9 +101,10 @@ move from lighting into compositing or publishing.
 
 **Visual:** coverage terminal summary or CI run.
 
-- 275 automated tests in the latest verified run.
-- 95.57% total statement/branch coverage in the latest verified run.
-- CI rejects coverage below 90% on Windows/Ubuntu and Python 3.11/3.12.
+- Show the current verified test total and combined statement/branch coverage
+  from the final release changelog rather than a historical screenshot.
+- CI is configured to reject combined coverage below 95% on Windows/Ubuntu and
+  Python 3.11/3.12; display a remote run only if it has actually completed.
 - Tests cover temporary deterministic EXR fixtures, corrupt files, mixed
   resolutions/AOV structures, RGB/BGR, readers, rules, 1,000-frame simulated
   sequences, reports, CLI and critical GUI workflows.
@@ -109,7 +112,9 @@ move from lighting into compositing or publishing.
 ## Slide 12 - Critical evaluation (12:30-13:45)
 
 - AOV categorisation remains heuristic.
-- Deep and complete multipart processing remain outside scope.
+- Deep sample interpretation remains outside scope; flat multipart is supported.
+- Named multipart identity is stable while multipart; unnamed/duplicate parts
+  use index fallback and two-part-to-single-part transitions change namespaces.
 - Technical passes receive objective channel diagnostics but still need
   renderer-aware semantic validation.
 - Timing results are hardware and cache dependent.
@@ -120,7 +125,8 @@ move from lighting into compositing or publishing.
 - A prototype became a modular and reproducibly evaluated validation tool.
 - The strongest contribution is the shared structured analysis pipeline.
 - It is relevant to both Lighting TD and Pipeline TD portfolios.
-- Future work: renderer-aware presets, technical-pass rules, packaging and DCC
+- Future work: renderer-aware presets, technical-pass rules, native-memory
+  evaluation and DCC
   integration.
 
 End on the completed JSON/HTML report and invite questions.

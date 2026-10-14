@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "description": "Observed Venator v20 RAW-derived masters, frames 1065-1208, linear Rec.709. Expected warnings are retained, not accepted as artistic approval.",
+  "metadata": {
+    "status": "warning",
+    "frames_discovered": 144,
+    "frames_processed": 144,
+    "frames_failed": 0,
+    "aovs_detected": 18,
+    "color_aovs_analyzed": 18,
+    "technical_aovs_diagnosed": 0,
+    "summary_by_aov_category": {"color": 18},
+    "summary_by_severity": {"warning": 2}
+  },
+  "dimensions": [1920, 810],
+  "channel_count": 55,
+  "findings": [
+    {"rule_id": "empty_aov", "severity": "warning", "aov": "beauty_bridge_solar"},
+    {"rule_id": "near_empty_aov", "severity": "warning", "aov": "beauty_ship_emission"}
+  ],
+  "outliers_by_aov": {"beauty_ship_diffuse": 6, "beauty_sun_key": 9}
+}

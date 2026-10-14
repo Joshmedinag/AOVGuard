@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 from typing import Any, Mapping
 
-from aovguard.core.models import AnalysisOptions, AnalysisReport, FileInspection, Finding
+from aovguard.core.memory import MEMORY_MODEL_VERSION
+from aovguard.core.models import (
+    AnalysisOptions,
+    AnalysisReport,
+    AOVDescriptor,
+    FileInspection,
+    Finding,
+)
 from aovguard.core.status import analysis_status
+from aovguard.io.output import atomic_text_writer
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.2"
 
 
 def _json_safe(value: Any) -> Any:
@@ -25,6 +34,8 @@ def _json_safe(value: Any) -> Any:
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
     return value
 
 
@@ -35,22 +46,47 @@ def _version() -> str:
         return "unknown"
 
 
+def _aov_to_dict(aov: AOVDescriptor) -> dict[str, Any]:
+    return {
+        "name": aov.name,
+        "channels": list(aov.channels),
+        "category": aov.category.value,
+        "category_confidence": aov.category_confidence,
+        "part_index": aov.part_index,
+        "original_name": aov.original_name,
+        "original_channels": list(aov.original_channels),
+    }
+
+
 def _inspection_to_dict(inspection: FileInspection) -> dict[str, Any]:
     return {
         "path": str(inspection.path),
         "width": inspection.width,
         "height": inspection.height,
+        "data_window": inspection.data_window,
+        "display_window": inspection.display_window,
+        "display_width": inspection.display_width,
+        "display_height": inspection.display_height,
         "channels": list(inspection.channels),
-        "aovs": [
-            {
-                "name": aov.name,
-                "channels": list(aov.channels),
-                "category": aov.category.value,
-                "category_confidence": aov.category_confidence,
-            }
-            for aov in inspection.aovs
-        ],
+        "aovs": [_aov_to_dict(aov) for aov in inspection.aovs],
         "part_count": inspection.part_count,
+        "parts": [
+            {
+                "index": part.index,
+                "name": part.name,
+                "view": part.view,
+                "width": part.width,
+                "height": part.height,
+                "display_width": part.display_width,
+                "display_height": part.display_height,
+                "data_window": part.data_window,
+                "display_window": part.display_window,
+                "is_deep": part.is_deep,
+                "channels": list(part.channels),
+                "aovs": [_aov_to_dict(aov) for aov in part.aovs],
+            }
+            for part in inspection.parts
+        ],
         "is_deep": inspection.is_deep,
         "warnings": list(inspection.warnings),
     }
@@ -82,6 +118,9 @@ def _options_to_dict(options: AnalysisOptions | None) -> dict[str, Any] | None:
         "max_depth": options.max_depth,
         "allow_multiple_sequences": options.allow_multiple_sequences,
         "max_frames": options.max_frames,
+        "max_memory_mb": options.max_memory_mb,
+        "isolate_frames": options.isolate_frames,
+        "frame_timeout_seconds": options.frame_timeout_seconds,
         "expected_frame_range": (
             list(options.expected_frame_range) if options.expected_frame_range is not None else None
         ),
@@ -130,10 +169,13 @@ def build_analysis_report_payload(
         key = finding.severity.value
         severity_summary[key] = severity_summary.get(key, 0) + 1
     category_summary: dict[str, int] = {}
-    if report.inspections:
-        for descriptor in report.inspections[0].aovs:
-            key = descriptor.category.value
-            category_summary[key] = category_summary.get(key, 0) + 1
+    detected = {
+        descriptor.name: descriptor.category.value
+        for inspection in report.inspections
+        for descriptor in inspection.aovs
+    }
+    for category in detected.values():
+        category_summary[category] = category_summary.get(category, 0) + 1
 
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -156,6 +198,22 @@ def build_analysis_report_payload(
             "rules_executed": list(report.rules_executed),
             "summary_by_severity": severity_summary,
             "options": _options_to_dict(options),
+            "effective_rules": list(report.effective_rules),
+            "measurement_region": "data_window",
+            "memory_estimation": {
+                "model_version": MEMORY_MODEL_VERSION,
+                "estimate_unit": "bytes",
+                "budget_unit": "MiB",
+                "bytes_per_mib": 1024 * 1024,
+                "description": (
+                    "Conservative per-frame header-based estimate of native channel buffers, "
+                    "promotions, AOV stacks, scratch space, fixed reserve and safety margin."
+                ),
+                "caveat": (
+                    "This estimate gates pixel decoding; it is not a hard operating-system "
+                    "memory limit or a guarantee of measured process peak RSS."
+                ),
+            },
         },
         "frames": [str(frame) for frame in report.frames],
         "successful_frames": [str(frame) for frame in report.successful_frames],
@@ -201,6 +259,12 @@ def build_analysis_report_payload(
             "warnings": list(report.sequence_check.warnings),
         },
         "inspections": [_inspection_to_dict(inspection) for inspection in report.inspections],
+        "memory_estimates": {
+            str(path): asdict(estimate) for path, estimate in report.memory_estimates.items()
+        },
+        "frame_execution": {
+            str(path): asdict(record) for path, record in report.frame_execution.items()
+        },
         "aov_inventory": _aov_inventory(report),
         "metrics_by_aov": {
             name: asdict(metrics) for name, metrics in report.metrics_by_aov.items()
@@ -216,6 +280,17 @@ def build_analysis_report_payload(
                 aov_name: asdict(metrics) for aov_name, metrics in aov_metrics.items()
             }
             for frame_path, aov_metrics in report.frame_metrics.items()
+        },
+        "frame_channel_metrics": {
+            str(path): {
+                name: {channel: asdict(metrics) for channel, metrics in channels.items()}
+                for name, channels in aovs.items()
+            }
+            for path, aovs in report.frame_channel_metrics.items()
+        },
+        "series_metrics_by_sequence": {
+            sequence: {name: asdict(metrics) for name, metrics in aovs.items()}
+            for sequence, aovs in report.series_metrics_by_sequence.items()
         },
         "series_metrics_by_aov": {
             aov_name: {
@@ -249,13 +324,12 @@ def write_analysis_json(
     output_path: str | Path,
     *,
     options: AnalysisOptions | None = None,
+    protected_paths: Iterable[str | Path] = (),
 ) -> None:
-    """Serialize a canonical strict JSON report to disk."""
+    """Atomically publish strict JSON, protecting frames and caller-supplied inputs."""
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_analysis_report_payload(report, options=options)
-    output_path.write_text(
-        json.dumps(payload, indent=2, allow_nan=False),
-        encoding="utf-8",
-    )
+    with atomic_text_writer(
+        output_path, protected_paths=(report.source, *report.frames, *protected_paths),
+    ) as handle:
+        json.dump(payload, handle, indent=2, allow_nan=False)

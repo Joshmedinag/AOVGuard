@@ -25,8 +25,8 @@ the exact editions and access dates required by the university APA guidance.
   Explains cached and demand-driven access to large image collections.
 - OpenCV contributors. *Image file reading and codecs*.
   https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html
-  Provides context for the legacy simple-image path and its limitations for
-  named EXR channels.
+  Provides historical context for the original simple-image path and its
+  limitations for named EXR channels. OpenCV is no longer a product dependency.
 
 ## AOV and renderer workflows
 

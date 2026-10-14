@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import cv2
 import Imath
 import numpy as np
 import OpenEXR
@@ -118,6 +117,26 @@ def test_cli_analyze_writes_new_json_report(tmp_path: Path, capsys) -> None:
     assert payload["sequence_check"]["sequences"][0]["pattern"] == "shot.####.exr"
 
 
+@pytest.mark.parametrize("custom_weights", [False, True])
+def test_cli_analyze_uses_acescg_or_custom_override(tmp_path: Path, custom_weights: bool) -> None:
+    exr_path = _test_exr(tmp_path / "shot.1001.exr")
+    report_path = tmp_path / "report.json"
+    args = [
+        "analyze", str(exr_path), "--json", str(report_path), "--luminance-model", "acescg"
+    ]
+    expected = [0.2722287168, 0.6740817658, 0.0536895174]
+    if custom_weights:
+        args.extend(["--luminance-weights", "0.25", "0.5", "0.25"])
+        expected = [0.25, 0.5, 0.25]
+
+    assert main(args) == 0
+    payload = json.loads(report_path.read_text())
+    assert payload["metadata"]["options"]["luminance_weights"] == expected
+    assert payload["metrics_by_aov"]["beauty"]["avg_luminance"] == pytest.approx(
+        expected[0] + 2 * expected[1] + 3 * expected[2]
+    )
+
+
 def test_cli_check_sequence_and_html_report(tmp_path: Path, capsys) -> None:
     _test_exr(tmp_path / "shot.1001.exr")
     _test_exr(tmp_path / "shot.1003.exr")
@@ -184,6 +203,140 @@ def test_cli_analyze_rejects_invalid_custom_weights(tmp_path: Path, capsys) -> N
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert "positive sum" in err
+
+
+@pytest.mark.parametrize("budget", ["0", "-1", "nan", "inf", "-inf"])
+def test_cli_analyze_rejects_invalid_memory_budget(tmp_path: Path, capsys, budget: str) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["analyze", str(tmp_path), f"--max-memory-mb={budget}"])
+
+    assert error.value.code == 1
+    message = capsys.readouterr().err
+    assert "memory" in message.lower()
+    assert "Traceback" not in message
+
+
+def test_cli_memory_budget_refuses_decode_and_exports_evidence(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frame = _test_exr(tmp_path / "shot.1001.exr")
+    report_path = tmp_path / "memory.json"
+    html_path = tmp_path / "memory.html"
+    native_file = OpenEXR.File
+
+    def header_only_file(*args, **kwargs):
+        assert kwargs.get("header_only", False), "An over-budget frame must not be decoded."
+        return native_file(*args, **kwargs)
+
+    monkeypatch.setattr(OpenEXR, "File", header_only_file)
+    assert main([
+        "analyze", str(frame), "--in-process", "--max-memory-mb", "1", "--json", str(report_path),
+        "--html", str(html_path),
+    ]) == 1
+
+    payload = json.loads(report_path.read_text())
+    assert payload["schema_version"] == "1.2"
+    assert payload["metadata"]["options"]["max_memory_mb"] == 1.0
+    assert payload["metadata"]["frames_processed"] == 0
+    assert payload["metadata"]["frames_failed"] == 1
+    finding = next(item for item in payload["findings"] if item["rule_id"] == "memory_budget")
+    assert finding["file"] == str(frame)
+    assert finding["affected_files"] == [str(frame)]
+    assert payload["memory_estimates"][str(frame)]["estimated_mib"] > 1
+    assert "memory_budget" in capsys.readouterr().out
+    document = html_path.read_text()
+    assert "1 MiB" in document
+    assert "Blocked by estimate budget" in document
+    assert "not a hard operating-system memory limit" in document
+
+
+def test_cli_memory_budget_allows_small_frame(tmp_path: Path) -> None:
+    frame = _test_exr(tmp_path / "shot.1001.exr")
+    report_path = tmp_path / "memory.json"
+    html_path = tmp_path / "memory.html"
+
+    assert main([
+        "analyze", str(frame), "--max-memory-mb", "1000.5", "--json", str(report_path),
+        "--html", str(html_path),
+    ]) == 0
+    payload = json.loads(report_path.read_text())
+    assert payload["metadata"]["frames_processed"] == 1
+    assert payload["metadata"]["options"]["max_memory_mb"] == 1000.5
+    assert payload["memory_estimates"][str(frame)]["estimated_mib"] < 1000.5
+    assert "Within estimate budget" in html_path.read_text()
+
+
+@pytest.mark.parametrize("timeout", ["0", "-1", "nan", "inf", "-inf"])
+def test_cli_rejects_invalid_frame_timeout(tmp_path: Path, capsys, timeout: str) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["analyze", str(tmp_path), f"--frame-timeout-seconds={timeout}"])
+
+    assert error.value.code == 1
+    message = capsys.readouterr().err
+    assert "timeout" in message.lower()
+    assert "Traceback" not in message
+
+
+def test_cli_rejects_in_process_timeout_before_reader_creation(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_reader(*args, **kwargs):
+        pytest.fail("Invalid execution policy must not construct a decoder.")
+
+    monkeypatch.setattr("aovguard.cli.OpenEXRReader", unexpected_reader)
+    with pytest.raises(SystemExit) as error:
+        main(["analyze", str(tmp_path), "--in-process", "--frame-timeout-seconds", "1"])
+
+    assert error.value.code == 2
+    assert "requires isolation" in capsys.readouterr().err
+
+
+def test_cli_keyboard_interrupt_returns_130_without_traceback(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("aovguard.cli.analyze_backend", interrupt)
+    assert main(["analyze", str(tmp_path)]) == 130
+    message = capsys.readouterr().err
+    assert "interrupted by user" in message
+    assert "Traceback" not in message
+
+
+def test_cli_uses_isolation_by_default_and_records_execution(tmp_path: Path) -> None:
+    import os
+
+    frame = _test_exr(tmp_path / "shot.1001.exr")
+    report_path = tmp_path / "isolated.json"
+    html_path = tmp_path / "isolated.html"
+    assert main([
+        "analyze", str(frame), "--frame-timeout-seconds", "10", "--json", str(report_path),
+        "--html", str(html_path),
+    ]) == 0
+
+    payload = json.loads(report_path.read_text())
+    assert payload["schema_version"] == "1.2"
+    assert payload["metadata"]["options"]["isolate_frames"] is True
+    assert payload["metadata"]["options"]["frame_timeout_seconds"] == 10
+    record = payload["frame_execution"][str(frame)]
+    assert record["mode"] == "isolated"
+    assert record["worker_pid"] > 0
+    assert record["worker_pid"] != os.getpid()
+    assert record["timeout_seconds"] == 10
+    assert record["elapsed_seconds"] >= 0
+    assert not any("worker_pid" in item["metrics"] for item in payload["findings"])
+    assert "Frame Execution Diagnostics" in html_path.read_text()
+
+
+def test_cli_in_process_opt_out_is_recorded(tmp_path: Path) -> None:
+    frame = _test_exr(tmp_path / "shot.1001.exr")
+    report_path = tmp_path / "in-process.json"
+
+    assert main(["analyze", str(frame), "--in-process", "--json", str(report_path)]) == 0
+    payload = json.loads(report_path.read_text())
+    assert payload["metadata"]["options"]["isolate_frames"] is False
+    assert payload["metadata"]["options"]["frame_timeout_seconds"] is None
 
 
 def test_cli_analyze_reports_missing_source_without_traceback(tmp_path: Path, capsys) -> None:
@@ -378,8 +531,7 @@ def test_cli_inspect_structure_handles_reader_error(tmp_path: Path, capsys) -> N
 
 
 def test_cli_legacy_simple_writes_json_and_csv(tmp_path: Path, capsys) -> None:
-    image = np.ones((2, 2, 3), dtype=np.float32)
-    assert cv2.imwrite(str(tmp_path / "beauty.1001.exr"), image)
+    _write_exr(tmp_path / "beauty.1001.exr", 2, 2, {"R": 1.0, "G": 1.0, "B": 1.0})
     config_path = tmp_path / "thresholds.json"
     config_path.write_text(
         json.dumps({"analysis": {"review_max_ratio": 0.1}}),

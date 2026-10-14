@@ -4,13 +4,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
 
 from aovguard.ui_components import LuminanceSeriesChart
 
 
-def test_luminance_chart_renders_range_symbols_tooltips_and_clicks() -> None:
-    _application = QApplication.instance() or QApplication([])
+def test_luminance_chart_renders_range_symbols_tooltips_and_clicks(qt_application) -> None:
     frames = tuple(Path(f"shot.{frame}.exr") for frame in (1001, 1002, 1003))
     chart = LuminanceSeriesChart()
     chart.resize(800, 220)
@@ -39,8 +37,7 @@ def test_luminance_chart_renders_range_symbols_tooltips_and_clicks() -> None:
     chart.close()
 
 
-def test_luminance_chart_filters_non_finite_samples() -> None:
-    _application = QApplication.instance() or QApplication([])
+def test_luminance_chart_filters_non_finite_samples(qt_application) -> None:
     chart = LuminanceSeriesChart()
 
     chart.set_series(

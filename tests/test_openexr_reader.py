@@ -459,16 +459,16 @@ def test_cryptomatte_metadata_excludes_id_channels_from_luminance(tmp_path: Path
     assert not any(finding.rule_id == "extreme_values" for finding in with_extreme.findings)
 
 
-def test_core_analysis_opens_each_frame_once(
+def test_core_analysis_decodes_each_frame_once_after_header_inspection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _multichannel_exr(tmp_path / "shot.1001.exr")
     original_file = OpenEXR.File
-    opened: list[str] = []
+    opened: list[tuple[str, bool]] = []
 
     def counting_file(*args, **kwargs):
-        opened.append(str(args[0]))
+        opened.append((str(args[0]), bool(kwargs.get("header_only", False))))
         return original_file(*args, **kwargs)
 
     monkeypatch.setattr(OpenEXR, "File", counting_file)
@@ -476,7 +476,8 @@ def test_core_analysis_opens_each_frame_once(
     report = analyze(tmp_path, AnalysisOptions(), OpenEXRReader())
 
     assert report.frame_count == 1
-    assert len(opened) == 1
+    assert sum(not header_only for _, header_only in opened) == 1
+    assert sum(header_only for _, header_only in opened) == 1
 
 
 def test_analysis_reports_real_mixed_resolutions_and_aov_structures(tmp_path: Path) -> None:
@@ -524,7 +525,7 @@ def test_analysis_continues_after_corrupt_frame_between_valid_exrs(tmp_path: Pat
     assert read_error.file == broken
 
 
-def test_openexr_reader_detects_multipart_structure(tmp_path: Path) -> None:
+def test_openexr_reader_detects_and_decodes_flat_multipart_structure(tmp_path: Path) -> None:
     path = _multipart_exr(tmp_path / "multipart.exr")
     reader = OpenEXRReader()
 
@@ -533,9 +534,11 @@ def test_openexr_reader_detects_multipart_structure(tmp_path: Path) -> None:
 
     assert inspection.part_count == 2
     assert not inspection.is_deep
-    assert inspection.unsupported_reason is not None
+    assert inspection.unsupported_reason is None
     assert frame.inspection.part_count == 2
-    assert frame.aovs == {}
+    assert set(frame.aovs) == {"[part:beauty]::beauty", "[part:secondary]::beauty"}
+    np.testing.assert_array_equal(frame.aovs["[part:beauty]::beauty"], 1.0)
+    np.testing.assert_array_equal(frame.aovs["[part:secondary]::beauty"], 2.0)
 
 
 def test_reader_validates_backend_metadata_and_channel_layout() -> None:

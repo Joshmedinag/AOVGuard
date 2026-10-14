@@ -2,11 +2,46 @@ import numpy as np
 import pytest
 
 from aovguard.core.luminance import (
+    ACESCG,
+    AP1,
     REC601,
     REC709,
     LuminanceWeights,
     compute_luminance,
+    luminance_weights_for_model,
 )
+
+
+def test_compute_luminance_acescg_unit_primaries() -> None:
+    image = np.eye(3, dtype=np.float64).reshape(1, 3, 3)
+
+    luminance = compute_luminance(image, ACESCG)
+
+    np.testing.assert_allclose(
+        luminance, [[0.2722287168, 0.6740817658, 0.0536895174]], rtol=0, atol=1e-12
+    )
+    assert sum((ACESCG.r, ACESCG.g, ACESCG.b)) == pytest.approx(1.0)
+    assert AP1 is ACESCG
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("rec709", REC709),
+        ("Rec.709", REC709),
+        ("Rec.601", REC601),
+        ("acescg", ACESCG),
+        ("ACEScg", ACESCG),
+        ("AP1", ACESCG),
+    ],
+)
+def test_luminance_model_resolution(model: str, expected: LuminanceWeights) -> None:
+    assert luminance_weights_for_model(model) == expected
+
+
+def test_luminance_model_resolution_rejects_unknown_model() -> None:
+    with pytest.raises(ValueError, match="Unknown luminance model"):
+        luminance_weights_for_model("sRGB-display")
 
 
 def test_compute_luminance_rec709_rgb_order() -> None:
@@ -51,6 +86,12 @@ def test_luminance_rejects_invalid_weights() -> None:
 
     with pytest.raises(ValueError, match="positive sum"):
         LuminanceWeights.from_values((0.0, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="booleans"):
+        LuminanceWeights.from_values((True, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="positive sum"):
+        LuminanceWeights.from_values((1e308, 1e308, 1e308), normalize=True)
 
 
 def test_compute_luminance_accepts_grayscale_as_already_luminance() -> None:

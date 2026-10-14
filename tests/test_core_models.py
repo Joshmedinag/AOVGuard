@@ -14,6 +14,7 @@ from aovguard.core.models import (
     Finding,
     FrameData,
     MetricSet,
+    PartInspection,
     SeriesMetricSet,
     Severity,
     SourceKind,
@@ -34,7 +35,7 @@ def test_file_inspection_reports_unsupported_deep_exr() -> None:
     assert inspection.unsupported_reason == "Deep EXR data is not supported by the MVP backend."
 
 
-def test_file_inspection_reports_unsupported_multipart_exr() -> None:
+def test_file_inspection_supports_flat_multipart_exr() -> None:
     inspection = FileInspection(
         path=Path("multi.exr"),
         width=16,
@@ -44,7 +45,29 @@ def test_file_inspection_reports_unsupported_multipart_exr() -> None:
         part_count=2,
     )
 
-    assert "Multipart EXR" in inspection.unsupported_reason
+    assert inspection.unsupported_reason is None
+
+
+def test_part_inspection_delivery_dimensions_are_independent_of_pixels() -> None:
+    part = PartInspection(0, "left", 3, 2, ("R",), (), display_window=((-2, 4), (7, 9)))
+    assert (part.display_width, part.display_height) == (10, 6)
+    fallback = PartInspection(0, "", 3, 2, (), ())
+    assert (fallback.display_width, fallback.display_height) == (3, 2)
+
+
+@pytest.mark.parametrize("threshold", [-1.0, float("nan"), float("inf"), True, "0.1", 10**400])
+def test_analysis_options_reject_invalid_pixel_threshold(threshold: object) -> None:
+    with pytest.raises(ValueError, match="Non-black threshold"):
+        AnalysisOptions(non_black_threshold=threshold)
+
+
+def test_analysis_options_freeze_weights_and_validate_them() -> None:
+    values = [0.2, 0.7, 0.1]
+    options = AnalysisOptions(luminance_weights=values)
+    values[0] = 8
+    assert options.luminance_weights == (0.2, 0.7, 0.1)
+    with pytest.raises(ValueError, match="finite"):
+        AnalysisOptions(luminance_weights=(float("nan"), 1.0, 0.0))
 
 
 def test_frame_data_freezes_aov_mapping() -> None:

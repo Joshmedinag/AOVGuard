@@ -159,3 +159,27 @@ def test_build_file_inspection_rejects_invalid_metadata() -> None:
             channels=("R", "G", "B"),
             part_count=0,
         )
+
+
+def test_root_and_named_beauty_have_distinct_deterministic_names() -> None:
+    channels = (
+        "R", "G", "B",
+        "beauty.R", "beauty.G", "beauty.B",
+        "beauty [root].R", "beauty [root].G", "beauty [root].B",
+    )
+
+    descriptors = infer_aov_descriptors(channels)
+
+    assert [descriptor.name for descriptor in descriptors] == [
+        "beauty [root 2]", "beauty", "beauty [root]",
+    ]
+    assert descriptors[0].channels == ("R", "G", "B")
+    assert set(channel for descriptor in descriptors for channel in descriptor.channels) == set(channels)
+
+
+def test_root_scalar_and_named_group_are_both_preserved() -> None:
+    descriptors = infer_aov_descriptors(("custom", "custom.foo", "custom.bar"))
+
+    assert [descriptor.name for descriptor in descriptors] == ["custom [root]", "custom"]
+    assert descriptors[0].channels == ("custom",)
+    assert descriptors[1].channels == ("custom.foo", "custom.bar")

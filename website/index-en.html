@@ -38,9 +38,9 @@
         </div>
       </div>
       <div class="hero-facts" aria-label="Verified project facts">
-        <div><strong>282</strong><span>automated tests</span></div>
-        <div><strong>95.37%</strong><span>branch-aware coverage</span></div>
-        <div><strong>1 read</strong><span>per compatible frame</span></div>
+        <div><strong>1036</strong><span>Windows checks passed; 3 skipped</span></div>
+        <div><strong>96.34%</strong><span>combined Windows/Python 3.12 coverage</span></div>
+        <div><strong>1 decode</strong><span>after header preflight</span></div>
         <div><strong>1 core</strong><span>shared by GUI and CLI</span></div>
       </div>
     </section>
@@ -59,7 +59,7 @@
       <ol class="workflow">
         <li><span>01</span><strong>Discover</strong><p>Find files using patterns, recursive search, depth, and frame limits.</p></li>
         <li><span>02</span><strong>Inspect</strong><p>Describe resolution, channels, AOVs, parts, and unsupported structures.</p></li>
-        <li><span>03</span><strong>Read</strong><p>Open each compatible frame once and retain every required component.</p></li>
+        <li><span>03</span><strong>Read</strong><p>Decode each compatible frame once after header preflight; retain every physical channel, including alpha and IDs.</p></li>
         <li><span>04</span><strong>Validate</strong><p>Detect non-finite data, empty AOVs, extremes, changes, and discontinuities.</p></li>
         <li><span>05</span><strong>Report</strong><p>Return the same evidence through the GUI, CLI, JSON, and HTML.</p></li>
       </ol>
@@ -112,6 +112,8 @@
           luminance and temporal-change charts, direct outlier navigation,
           technical-channel diagnostics, sequence checks, baseline comparison,
           and JSON/HTML export. The CLI uses the same analysis core.
+          Current capture reconstructed from the Venator JSON, with real metrics
+          and anonymized visible paths; this is not a new EXR analysis.
         </figcaption>
       </figure>
     </section>
@@ -148,18 +150,24 @@
           <h3>Available now</h3>
           <ul>
             <li>RGB/RGBA EXRs and multilayer files with named AOVs</li>
+            <li>Flat multipart parts with independent identities, views and windows</li>
             <li>Color, scalar, vector, mask, depth, Cryptomatte, and unknown categories</li>
             <li>NaN, infinities, negatives, extremes, empty AOVs, and constant channels</li>
             <li>Continuity, duplicates, padding, and expected sequence ranges</li>
             <li>Median, MAD, temporal change, and luminance outliers</li>
             <li>Baseline report comparison and JSON/HTML export</li>
-            <li>Cooperative cancellation and corrupt-frame diagnostics</li>
+            <li>Corrupt-frame diagnostics and cancellation with process cleanup</li>
+            <li>CLI-only base install; optional Qt desktop extra; no OpenCV dependency</li>
+            <li>Opt-in per-frame header memory guard, with exact-file rejection evidence</li>
+            <li>Default isolated analysis, optional frame timeout and worker recovery</li>
           </ul>
         </div>
         <div>
           <h3>Deliberate limitations</h3>
           <ul>
-            <li>Deep EXR and full multipart analysis are detected but not processed</li>
+            <li>Any deep part or partial decode rejects the complete frame</li>
+            <li>The native reader eagerly loads all part pixels; no streaming guarantee</li>
+            <li>Isolation is not a security sandbox or RSS cap; in-process cancellation waits for native I/O</li>
             <li>Cryptomatte classification depends on standard metadata or a preset</li>
             <li>Technical passes do not receive renderer-specific artistic interpretation</li>
             <li>Thresholds must be calibrated for each show and render setup</li>
@@ -174,17 +182,19 @@
         <p class="eyebrow">Quick start</p>
         <h2>Inspect and analyze real EXR files</h2>
       </div>
-      <pre><code>uv sync --python 3.12 --extra dev
+      <pre><code>uv sync --locked --python 3.12 --extra dev
 uv run aovguard inspect-structure "C:\path\render.exr"
 uv run aovguard check-sequence "C:\path\renders" --expected-frame-range 1 800
 uv run aovguard analyze "C:\path\renders" --expected-frame-range 1 800 --json reports\report.json --html reports\report.html
-uv run aovguard-ui</code></pre>
+uv run --extra gui aovguard-ui</code></pre>
       <p class="run-note"><a href="documentation.html">Read the complete installation, usage, rules, reporting, and troubleshooting guide.</a></p>
+      <p><strong>Release candidate 1.4.0rc1:</strong> CLI/GUI isolate analysis by default and reuse one sequential child. Use <code>--frame-timeout-seconds 60</code> to bound each frame after readiness, or <code>--in-process</code> to opt out without a timeout. <code>--max-memory-mb 4096</code> gates all flat parts and channels. These are execution controls, not security sandboxes or hard RSS limits. Stable 1.3.0 packages remain separate.</p>
+      <p>Local candidate checks have 1036 passed, 3 skipped and 96.34% coverage on Windows/Python 3.12.12. Maya and Venator renders were fully read with contribution warnings retained and CLI/GUI parity. The maintained verifier repeats these checks without distributing EXRs. <a href="documentation.html#verification">Read results and limits</a> or <a href="https://github.com/Joshmedinag/AOVGuard/actions">check CI by revision</a>.</p>
     </section>
   </main>
 
   <footer>
-    <strong>AOVGuard 1.2.1 + current corrections</strong>
+    <strong>AOVGuard</strong>
     <span>Joshua A. Medina G. &middot; MSc Computer Animation and Visual Effects &middot; 2026</span>
     <span>MIT License</span>
   </footer>

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import html
+from collections.abc import Iterable
 from importlib import metadata
 from pathlib import Path
 
 from aovguard.core.findings import finding_recommendation
+from aovguard.core.memory import MIB_BYTES
 from aovguard.core.models import AnalysisOptions, AnalysisReport, Finding, Severity
 from aovguard.core.status import analysis_status, severity_counts
+from aovguard.io.inspector import RGB_SUFFIXES
+from aovguard.io.output import atomic_text_writer
 from aovguard.sequence.sequence_checker import format_frame_ranges
 
 
@@ -23,6 +27,13 @@ def _finding_source_label(finding: Finding) -> object:
         count = len(finding.affected_files)
         return f"{count} file{'s' if count != 1 else ''}"
     return "Selected source"
+
+
+def _finding_source_html(finding: Finding) -> str:
+    if len(finding.affected_files) > 1:
+        paths = "".join(f"<li>{_cell(path)}</li>" for path in finding.affected_files)
+        return f"<details><summary>{len(finding.affected_files)} files</summary><ul>{paths}</ul></details>"
+    return _cell(_finding_source_label(finding))
 
 
 def _version() -> str:
@@ -52,6 +63,18 @@ def build_analysis_html(
     status = analysis_status(report)
     status_class = f"status-{status.value}"
     counts = severity_counts(report)
+    part_rows = [
+        "<tr>"
+        f"<td>{_cell(inspection.path)}</td>"
+        f"<td>{part.index}</td><td>{_cell(part.name or '(unnamed)')}</td>"
+        f"<td>{_cell(part.view or '-')}</td>"
+        f"<td>{part.width}x{part.height}<br>{_cell(part.data_window)}</td>"
+        f"<td>{part.display_width}x{part.display_height}<br>{_cell(part.display_window)}</td>"
+        f"<td>{_cell(', '.join(part.channels))}</td>"
+        "</tr>"
+        for inspection in report.inspections
+        for part in inspection.parts
+    ]
     sequence_rows = []
     for sequence in report.sequence_check.sequences:
         frame_range = (
@@ -81,12 +104,12 @@ def build_analysis_html(
     metric_rows = []
     categories = {
         descriptor.name: descriptor.category.value
-        for inspection in report.inspections[:1]
+        for inspection in report.inspections
         for descriptor in inspection.aovs
     }
     channels = {
         descriptor.name: ", ".join(descriptor.channels)
-        for inspection in report.inspections[:1]
+        for inspection in report.inspections
         for descriptor in inspection.aovs
     }
     for name, metrics in report.metrics_by_aov.items():
@@ -120,8 +143,11 @@ def build_analysis_html(
         f"<td>{metrics.negative_count}</td>"
         "</tr>"
         for aov_name, channel_metrics in report.channel_metrics_by_aov.items()
-        if aov_name not in report.metrics_by_aov
         for channel_name, metrics in channel_metrics.items()
+        if (
+            aov_name not in report.metrics_by_aov
+            or channel_name.split("::")[-1].rsplit(".", 1)[-1].casefold() not in RGB_SUFFIXES
+        )
     ]
     frame_metric_rows = [
         "<tr>"
@@ -139,11 +165,11 @@ def build_analysis_html(
         "<tr>"
         f'<td><span class="severity severity-{finding.severity.value}">{finding.severity.value.upper()}</span></td>'
         f"<td>{_cell(finding.rule_id)}</td>"
-        f"<td>{_cell(finding.aov or finding.channel or '-')}</td>"
+        f"<td>{_cell(finding.aov or '-')}<br>{_cell(finding.channel or '-')}</td>"
         f"<td>{_cell(finding.message)}</td>"
         f"<td>{_cell(finding_recommendation(finding))}</td>"
         f"<td>{_cell(_finding_interpretation(finding))}</td>"
-        f"<td>{_cell(_finding_source_label(finding))}</td>"
+        f"<td>{_finding_source_html(finding)}</td>"
         "</tr>"
         for finding in report.findings
     ]
@@ -155,11 +181,54 @@ def build_analysis_html(
         else "Not recorded"
     )
     frame_limit = options.max_frames if options and options.max_frames else "Unlimited"
+    memory_limit = options.max_memory_mb if options is not None else None
+    memory_budget = (
+        f"{memory_limit:g} MiB" if memory_limit is not None
+        else "Unlimited" if options is not None else "Not recorded"
+    )
+    memory_rows = []
+    for path, estimate in report.memory_estimates.items():
+        if memory_limit is None:
+            decision = "Not gated" if options is not None else "Budget not recorded"
+        else:
+            numerator, denominator = memory_limit.as_integer_ratio()
+            exceeds_budget = estimate.estimated_bytes * denominator > numerator * MIB_BYTES
+            decision = "Blocked by estimate budget" if exceeds_budget else "Within estimate budget"
+        memory_rows.append(
+            "<tr>"
+            f"<td>{_cell(path)}</td><td>{estimate.estimated_mib:.2f}</td>"
+            f"<td>{_cell(memory_budget)}</td><td>{_cell(decision)}</td>"
+            f"<td>{_cell(estimate.model_version)}</td>"
+            "</tr>"
+        )
     expected_range = (
         f"{report.sequence_check.expected_frame_range[0]}-"
         f"{report.sequence_check.expected_frame_range[1]}"
         if report.sequence_check.expected_frame_range is not None else "Not set"
     )
+    execution_mode = (
+        "Isolated frame worker" if options and options.isolate_frames
+        else "In process" if options is not None else "Not recorded"
+    )
+    frame_timeout = (
+        f"{options.frame_timeout_seconds:g} s" if options and options.frame_timeout_seconds is not None
+        else "No frame timeout" if options is not None else "Not recorded"
+    )
+    execution_rows = []
+    for path, record in report.frame_execution.items():
+        timeout = (
+            f"{record.timeout_seconds:g} s" if record.timeout_seconds is not None else "None"
+        )
+        elapsed = f"{record.elapsed_seconds:.3f}" if record.elapsed_seconds is not None else "-"
+        execution_rows.append(
+            "<tr>"
+            f"<td>{_cell(path)}</td><td>{_cell(record.mode)}</td><td>{_cell(record.status)}</td>"
+            f"<td>{_cell(timeout)}</td><td>{_cell(elapsed)}</td>"
+            f"<td>{_cell(record.worker_pid if record.worker_pid is not None else '-')}</td>"
+            f"<td>{_cell(record.exit_code if record.exit_code is not None else '-')}</td>"
+            f"<td>{_cell(record.stage)}</td>"
+            "</tr>"
+        )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -216,8 +285,35 @@ def build_analysis_html(
   Preset: <strong>{_cell(preset)}</strong> &middot;
   Luminance RGB weights: <strong>{_cell(luminance)}</strong> &middot;
   Frame limit: <strong>{_cell(frame_limit)}</strong> &middot;
+  Memory estimate budget: <strong>{_cell(memory_budget)}</strong> &middot;
+  Frame execution: <strong>{_cell(execution_mode)}</strong> &middot;
+  Frame service timeout: <strong>{_cell(frame_timeout)}</strong> &middot;
   Expected frame range: <strong>{_cell(expected_range)}</strong></p>
+  <p>Pixel statistics measure the stored data window. Delivery consistency uses the display window, including its origin.</p>
   {f"<h2>Warnings</h2><ul>{warnings}</ul>" if warnings else ""}
+  <h2>Pre-decode Memory Estimates</h2>
+  <p>MiB means 1,048,576 bytes. These conservative per-frame estimates gate pixel decoding;
+  they are not a hard operating-system memory limit or a guarantee of process peak RSS.
+  A frame within the estimate budget may still require more memory at runtime.</p>
+  <table><thead><tr><th>File</th><th>Estimated MiB</th><th>Budget</th><th>Estimate decision</th><th>Model</th></tr></thead>
+  <tbody>{"".join(memory_rows) or '<tr><td colspan="5" class="empty">No pre-decode memory estimates recorded.</td></tr>'}</tbody></table>
+  <h2>Frame Execution Diagnostics</h2>
+  <p>Isolated execution uses a frame worker process, not a security sandbox or a hard RSS cap.
+  The frame-service deadline starts after worker readiness and includes header inspection,
+  memory admission, decoding, reductions and result transfer.
+  Startup and termination cleanup use separate waits; recorded elapsed time can include
+  startup, frame service and cleanup.
+  Discovery, final rule evaluation, export and standalone inspection remain in the parent
+  outside this frame-service deadline. Unconfirmed worker cleanup is fatal: the job stops
+  instead of silently reusing the executor. Bounded waits do not guarantee OS termination
+  of an unkillable process.
+  In-process native reads cannot be interrupted. Worker PIDs/times are execution
+  diagnostics, not numeric-analysis or baseline-finding evidence.</p>
+  <table><thead><tr><th>File</th><th>Mode</th><th>Status</th><th>Timeout</th><th>Elapsed seconds</th><th>Worker PID</th><th>Exit code</th><th>Stage</th></tr></thead>
+  <tbody>{"".join(execution_rows) or '<tr><td colspan="8" class="empty">No per-frame execution diagnostics recorded.</td></tr>'}</tbody></table>
+  <h2>EXR Parts</h2>
+  <table><thead><tr><th>File</th><th>Index</th><th>Name</th><th>View</th><th>Stored pixels / data window</th><th>Delivery / display window</th><th>Source channels</th></tr></thead>
+  <tbody>{"".join(part_rows) or '<tr><td colspan="7" class="empty">No per-part metadata recorded.</td></tr>'}</tbody></table>
   <h2>Sequences</h2>
   <table><thead><tr><th>Status</th><th>Pattern</th><th>Directory</th><th>Range</th><th>Present</th><th>Missing</th><th>Outside expected</th><th>Duplicates</th></tr></thead>
   <tbody>{"".join(sequence_rows) or '<tr><td colspan="8" class="empty">No numbered sequence detected.</td></tr>'}</tbody></table>
@@ -245,9 +341,12 @@ def write_analysis_html(
     output_path: str | Path,
     *,
     options: AnalysisOptions | None = None,
+    protected_paths: Iterable[str | Path] = (),
 ) -> None:
-    """Write a self-contained analysis report to an HTML file."""
+    """Atomically publish HTML, protecting frames and caller-supplied inputs."""
 
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_analysis_html(report, options=options), encoding="utf-8")
+    document = build_analysis_html(report, options=options)
+    with atomic_text_writer(
+        output_path, protected_paths=(report.source, *report.frames, *protected_paths),
+    ) as handle:
+        handle.write(document)

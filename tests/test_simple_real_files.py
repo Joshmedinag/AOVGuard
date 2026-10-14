@@ -1,15 +1,18 @@
 from pathlib import Path
 
-import cv2
 import numpy as np
+import OpenEXR
+import pytest
 
 from aovguard.simple import analyze_simple
 
 
 def test_analyze_simple_direct_exr_file(tmp_path: Path):
-    image = np.ones((8, 8, 3), dtype=np.float32) * 0.25
     exr_path = tmp_path / "beauty.0001.exr"
-    assert cv2.imwrite(str(exr_path), image)
+    channels = {
+        name: np.full((8, 8), 0.25, dtype=np.float32) for name in ("R", "G", "B")
+    }
+    OpenEXR.File({}, channels).write(str(exr_path))
 
     results = analyze_simple(tmp_path)
 
@@ -17,3 +20,4 @@ def test_analyze_simple_direct_exr_file(tmp_path: Path):
     assert results[0].aov_name == "beauty.0001"
     assert results[0].classification == "Active"
     assert results[0].non_black_ratio == 1.0
+    assert results[0].avg_luminance == pytest.approx(0.25)
