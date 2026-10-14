@@ -9,6 +9,20 @@ the package. `website/assets/aovguard-current-ui.png` shows the Venator master.
 
 ## Release candidate 1.4.0rc1 verification on 2026-10-13
 
+Final post-CI hardening gate: **1041 passed, 3 skipped, 0 failed, 96.34% combined
+application coverage**, 46.80 seconds from a new extracted and locked Python
+3.12.12 source installation. Ruff, mypy and website validation passed; 115
+critical files remained identical after testing. The initial PR run exposed
+Windows access denial during descendant capture. Five new regressions ensure
+only a retained handle confirming exit can resolve that case; genuine live or
+unconfirmed processes still fail. Sixty real deadline/cleanup repetitions on
+Windows/Python 3.11.14 passed. The current verifier repeated installed-wheel
+CLI/GUI acceptance on all 144 denoised frames, with unchanged SHA-256,
+cancellation/restart and cleanup confirmed. Application modules and the wheel
+are unchanged. Publication was held until the corrected revision's CI gates.
+
+The following checkpoint predates that verifier hardening:
+
 The versioned checkout passed 1036 tests, 3 skipped and 96.34% combined
 application coverage in 45.94 seconds. A separately extracted, manifest-verified
 168-file source snapshot passed the same full suite in its own locked Python

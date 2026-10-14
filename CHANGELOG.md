@@ -13,6 +13,12 @@ Candidate packaging, clean installation and remote CI must be recorded
 separately from the pre-candidate checkpoints below. See
 [release notes](docs/release_notes_1.4.0rc1.md) for scope and limitations.
 
+- Final CI hardening: when Windows denies a descendant's terminate-access
+  handle, the verifier probes query/synchronize access and skips that PID only
+  after a retained handle confirms exit. Live, inaccessible or unconfirmed
+  descendants still fail cleanup. Five deterministic regressions cover exit,
+  live process, denied query, failed wait and failed handle close.
+
 ### Added
 
 - Opt-in real-sequence verification with explicit filename/range/color intent,

@@ -37,7 +37,28 @@ AOVs and every physical channel remain visible for integrity checks.
 
 ## Verification evidence and candidate gates
 
-The candidate checkout on Windows/Python 3.12.12 passed **1036 tests, 3 skipped
+The first push matrix passed, but its separate PR execution exposed Windows
+3.11 access denial during descendant capture in the verifier's deadline test. Publication
+was held. The final verifier now probes query/synchronize access after a denied
+terminate-access open and omits the process only when a retained handle is
+signaled, confirming exit. Live or unconfirmed processes still fail cleanup.
+Five deterministic regressions cover both outcomes and API failures; 60 real
+deadline/cleanup repetitions also passed on local Windows/Python 3.11.14.
+This changes the opt-in verification script, not the application's 48 wheel
+modules. Earlier packaging checkpoints below precede this final hardening.
+
+After hardening, a new verified source snapshot was extracted and installed in
+its own locked Python 3.12.12 environment: **1041 passed, 3 skipped, 0 failed,
+96.34% combined application coverage in 46.80 seconds**. Ruff, mypy (54 files)
+and four-page website validation passed. All 115 critical files matched the
+original, archive and extraction even after testing. The installed GUI wheel
+was exercised again with the current copied verifier outside the checkout:
+144-frame CLI/GUI PASS, exact semantic parity, baseline/export/retry checks,
+cancellation/restart (0.094 seconds to idle), confirmed cleanup and unchanged
+source SHA-256. CLI took 13.610 seconds; GUI took 13.047 seconds including
+presentation. These are local observations, not performance guarantees.
+
+The pre-hardening candidate checkout on Windows/Python 3.12.12 passed **1036 tests, 3 skipped
 and 96.34% combined application statement/branch coverage** (45.94 seconds).
 Ruff and mypy passed, including both Windows and Linux type targets for 54
 application/script files. Type targeting alone is not executed Linux testing.

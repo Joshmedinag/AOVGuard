@@ -39,7 +39,7 @@
         </div>
       </div>
       <div class="hero-facts" aria-label="Datos verificados del proyecto">
-        <div><strong>1036</strong><span>pruebas superadas en Windows; 3 omitidas</span></div>
+        <div><strong>1041</strong><span>pruebas superadas en Windows; 3 omitidas</span></div>
         <div><strong>96,34 %</strong><span>cobertura combinada Windows/Python 3.12</span></div>
         <div><strong>1 decodificación</strong><span>tras inspeccionar cabeceras</span></div>
         <div><strong>1 núcleo</strong><span>compartido por GUI y CLI</span></div>
@@ -190,7 +190,7 @@ uv run aovguard analyze "C:\ruta\renders" --expected-frame-range 1 800 --json re
 uv run --extra gui aovguard-ui</code></pre>
       <p class="run-note"><a href="documentacion.html">Consulta la guía completa de instalación, uso, reglas, reportes y solución de problemas.</a></p>
       <p><strong>Candidata 1.4.0rc1:</strong> CLI y GUI aíslan el análisis por defecto y reutilizan un proceso hijo secuencial. Usa <code>--frame-timeout-seconds 60</code> para limitar cada frame desde que el hijo está listo, o <code>--in-process</code> para desactivar el aislamiento sin timeout. <code>--max-memory-mb 4096</code> activa la estimación de todas las partes y canales. Son controles de ejecución, no un sandbox ni un límite RSS duro. Los paquetes estables 1.3.0 se conservan separados.</p>
-      <p>Verificación local de la candidata: 1036 pruebas superadas, 3 omitidas y 96,34 % de cobertura en Windows/Python 3.12.12. Los renders de Maya y Venator se leyeron completos, con advertencias de contribución conservadas y coincidencia CLI/GUI. El verificador reproducible permite repetir estas comprobaciones sin distribuir EXR. <a href="documentacion.html#verificacion">Ver resultados y límites</a> o <a href="https://github.com/Joshmedinag/AOVGuard/actions">consultar CI por revisión</a>.</p>
+      <p>Verificación local de la candidata desde código extraído: 1041 pruebas superadas, 3 omitidas y 96,34 % de cobertura en Windows/Python 3.12.12. Los renders de Maya y Venator se leyeron completos, con advertencias de contribución conservadas y coincidencia CLI/GUI. El verificador reproducible permite repetir estas comprobaciones sin distribuir EXR. <a href="documentacion.html#verificacion">Ver resultados y límites</a> o <a href="https://github.com/Joshmedinag/AOVGuard/actions">consultar CI por revisión</a>.</p>
     </section>
   </main>
 

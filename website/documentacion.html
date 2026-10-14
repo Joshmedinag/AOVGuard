@@ -45,7 +45,7 @@
         <p class="eyebrow">Guía de usuario y referencia técnica</p>
         <h1>Documentación de AOVGuard</h1>
         <p class="lead">AOVGuard valida archivos OpenEXR y secuencias de render. Detecta errores de lectura, NaN, infinitos, AOVs vacíos, canales desconocidos, cambios temporales y problemas de continuidad sin ocultar datos no reconocidos.</p>
-        <div class="status-note"><strong>Candidata 1.4.0rc1:</strong> incorpora controles de memoria, ejecución aislada, rangos técnicos opcionales, reportes protegidos y verificación reproducible con renders existentes. La suite local Windows/Python 3.12.12 supera 1036 pruebas, con 3 omitidas y 96,34 % de cobertura combinada. Es una versión previa a 1.4.0 estable; los paquetes 1.3.0 se conservan separados.</div>
+        <div class="status-note"><strong>Candidata 1.4.0rc1:</strong> incorpora controles de memoria, ejecución aislada, rangos técnicos opcionales, reportes protegidos y verificación reproducible con renders existentes. La suite desde código extraído en Windows/Python 3.12.12 supera 1041 pruebas, con 3 omitidas y 96,34 % de cobertura combinada. Es una versión previa a 1.4.0 estable; los paquetes 1.3.0 se conservan separados.</div>
       </header>
 
       <section id="instalacion">
@@ -283,7 +283,7 @@ uv run aovguard analyze ./renders --in-process --json ./reports/in-process.json<
 
       <section id="verificacion">
         <h2>Verificación de la candidata</h2>
-        <p>La suite local de la candidata obtiene <strong>1036 pruebas superadas, 3 omitidas y 96,34 % de cobertura combinada de sentencias y ramas</strong>. Ruff y mypy también pasan. Las comprobaciones de tipos incluyen objetivos Windows y Linux; esto no equivale a ejecutar la suite en Linux. Las ejecuciones remotas por revisión se consultan en <a href="https://github.com/Joshmedinag/AOVGuard/actions">GitHub Actions</a>.</p>
+        <p>La suite de la candidata desde código extraído obtiene <strong>1041 pruebas superadas, 3 omitidas y 96,34 % de cobertura combinada de sentencias y ramas</strong>. Ruff y mypy también pasan. Las comprobaciones de tipos incluyen objetivos Windows y Linux; esto no equivale a ejecutar la suite en Linux. Las ejecuciones remotas por revisión se consultan en <a href="https://github.com/Joshmedinag/AOVGuard/actions">GitHub Actions</a>.</p>
         <h3>Pruebas con renders existentes</h3>
         <div class="verification-table" tabindex="0" role="region" aria-label="Resultados de Maya y Venator; desplazamiento horizontal disponible">
           <table>

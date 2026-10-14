@@ -45,7 +45,7 @@
         <p class="eyebrow">User guide and technical reference</p>
         <h1>AOVGuard documentation</h1>
         <p class="lead">AOVGuard validates OpenEXR files and render sequences. It detects read errors, NaN values, infinities, empty AOVs, unknown channels, temporal changes, and continuity problems without hiding unrecognized data.</p>
-        <div class="status-note"><strong>Release candidate 1.4.0rc1:</strong> includes memory admission, isolated execution, optional technical ranges, protected reports and reproducible verification with existing renders. Local Windows/Python 3.12.12 checks have 1036 passed, 3 skipped and 96.34% combined coverage. This precedes stable 1.4.0; the existing 1.3.0 packages remain separate.</div>
+        <div class="status-note"><strong>Release candidate 1.4.0rc1:</strong> includes memory admission, isolated execution, optional technical ranges, protected reports and reproducible verification with existing renders. Extracted-source Windows/Python 3.12.12 checks have 1041 passed, 3 skipped and 96.34% combined coverage. This precedes stable 1.4.0; the existing 1.3.0 packages remain separate.</div>
       </header>
 
       <section id="installation">
@@ -283,7 +283,7 @@ uv run aovguard analyze ./renders --in-process --json ./reports/in-process.json<
 
       <section id="verification">
         <h2>Candidate verification</h2>
-        <p>The local candidate suite has <strong>1036 passed, 3 skipped and 96.34% combined application statement/branch coverage</strong>. Ruff and mypy pass. Type checks target Windows and Linux; that is not an executed Linux suite. Remote results for each revision are available in <a href="https://github.com/Joshmedinag/AOVGuard/actions">GitHub Actions</a>.</p>
+        <p>The extracted-source candidate suite has <strong>1041 passed, 3 skipped and 96.34% combined application statement/branch coverage</strong>. Ruff and mypy pass. Type checks target Windows and Linux; that is not an executed Linux suite. Remote results for each revision are available in <a href="https://github.com/Joshmedinag/AOVGuard/actions">GitHub Actions</a>.</p>
         <h3>Existing render sequences</h3>
         <div class="verification-table" tabindex="0" role="region" aria-label="Maya and Venator results; horizontal scrolling available">
           <table>

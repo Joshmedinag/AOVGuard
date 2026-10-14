@@ -46,6 +46,101 @@ class FakeWindowsAPI:
         self.closed.append(handle)
 
 
+class DeniedWindowsKernel:
+    def __init__(
+        self,
+        *,
+        probe_handle: int | None = 211,
+        wait_result: int = 0,
+        close_success: bool = True,
+    ) -> None:
+        self.probe_handle = probe_handle
+        self.wait_result = wait_result
+        self.close_success = close_success
+        self.opened: list[tuple[int, int]] = []
+        self.waited: list[tuple[int, int]] = []
+        self.closed: list[int] = []
+
+    def OpenProcess(self, access: int, inherit_handle: bool, pid: int) -> int | None:
+        self.opened.append((access, pid))
+        return self.probe_handle if access == 0x00101000 else None
+
+    def WaitForSingleObject(self, handle: int, milliseconds: int) -> int:
+        self.waited.append((handle, milliseconds))
+        return self.wait_result
+
+    def CloseHandle(self, handle: int) -> bool:
+        self.closed.append(handle)
+        return self.close_success
+
+
+def _mock_denied_windows_capture(
+    monkeypatch: pytest.MonkeyPatch, kernel: DeniedWindowsKernel
+) -> None:
+    api = object.__new__(verification_process._WindowsProcessAPI)
+    api._kernel = kernel
+    api._last_error = lambda: 5
+    api._win_error = lambda code: PermissionError(code, "Access is denied")
+    monkeypatch.setattr(verification_process.sys, "platform", "win32")
+    monkeypatch.setattr(verification_process, "_windows_api", lambda: api)
+    monkeypatch.setattr(
+        verification_process,
+        "_windows_snapshot",
+        lambda: {10: (1, "root"), 11: (10, "exiting-child")},
+    )
+
+
+def test_windows_access_denied_skips_only_a_handle_that_confirms_process_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = DeniedWindowsKernel(wait_result=0)
+    _mock_denied_windows_capture(monkeypatch, kernel)
+
+    captured = capture_descendants(10)
+    assert captured.pids == []
+    captured.stop()
+    assert kernel.opened == [(0x00101001, 11), (0x00101000, 11)]
+    assert kernel.waited == [(211, 0)]
+    assert kernel.closed == [211]
+
+
+def test_windows_access_denied_on_a_live_process_still_fails_cleanup_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = DeniedWindowsKernel(wait_result=258)
+    _mock_denied_windows_capture(monkeypatch, kernel)
+
+    with pytest.raises(RuntimeError, match="cleanup unconfirmed.*Access is denied"):
+        capture_descendants(10)
+    assert kernel.waited == [(211, 0)]
+    assert kernel.closed == [211]
+
+
+def test_windows_query_access_denied_still_fails_cleanup_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = DeniedWindowsKernel(probe_handle=None)
+    _mock_denied_windows_capture(monkeypatch, kernel)
+
+    with pytest.raises(RuntimeError, match="cleanup unconfirmed.*Access is denied"):
+        capture_descendants(10)
+    assert kernel.opened == [(0x00101001, 11), (0x00101000, 11)]
+    assert kernel.waited == []
+    assert kernel.closed == []
+
+
+@pytest.mark.parametrize("wait_result,close_success", [(0xFFFFFFFF, True), (0, False)])
+def test_windows_unconfirmed_probe_or_handle_close_cannot_be_reported_as_clean(
+    monkeypatch: pytest.MonkeyPatch, wait_result: int, close_success: bool
+) -> None:
+    kernel = DeniedWindowsKernel(wait_result=wait_result, close_success=close_success)
+    _mock_denied_windows_capture(monkeypatch, kernel)
+
+    with pytest.raises(RuntimeError, match="cleanup unconfirmed.*Access is denied"):
+        capture_descendants(10)
+    assert kernel.closed == [211]
+
+
 def _mock_windows(monkeypatch: pytest.MonkeyPatch, api: FakeWindowsAPI) -> None:
     monkeypatch.setattr(verification_process.sys, "platform", "win32")
     monkeypatch.setattr(verification_process, "_windows_api", lambda: api)

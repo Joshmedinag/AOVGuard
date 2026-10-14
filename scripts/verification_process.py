@@ -96,13 +96,23 @@ class _WindowsProcessAPI:
         self._kernel.CloseHandle.restype = wintypes.BOOL
 
     def open_process(self, pid: int) -> int | None:
-        """Retain terminate/query/synchronize access, skipping only disappeared PIDs."""
+        """Retain terminate/query/synchronize access, skipping only confirmed exits."""
         handle = self._kernel.OpenProcess(0x00101001, False, pid)
         if handle:
             return int(handle)
         error = self._last_error()
         if error == 87:  # ERROR_INVALID_PARAMETER: PID no longer exists.
             return None
+        if error == 5:  # ERROR_ACCESS_DENIED may race with process termination.
+            probe = self._kernel.OpenProcess(0x00101000, False, pid)
+            if probe:
+                try:
+                    # A retained, signaled process handle proves exit; a new
+                    # PID snapshot alone cannot establish the same identity.
+                    if self.wait(int(probe), 0):
+                        return None
+                finally:
+                    self.close(int(probe))
         raise self._win_error(error)
 
     def active(self, handle: int) -> bool:
