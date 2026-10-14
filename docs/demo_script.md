@@ -1,13 +1,16 @@
-# AOVGuard 2.0 Video Demonstration Script
+# AOVGuard 1.3.0 Video Demonstration Script
 
 Target duration: 6-8 minutes. Record at 1080p or higher with readable terminal
 and GUI text. Use authorised real EXRs and record their technical provenance so
 the demonstration remains traceable.
 
+When recording the current development checkout, distinguish its unreleased
+memory/execution controls from the unchanged 1.3.0 distribution artifacts.
+
 ## Preparation
 
 ```powershell
-uv sync --python 3.12 --extra dev
+uv sync --locked --python 3.12 --extra dev
 $exr = "D:\renders\approved\shot.1001.exr"
 $sequence = "D:\renders\approved\shot_sequence"
 ```
@@ -23,7 +26,7 @@ private paths and unrelated windows out of the recording.
 
 **Narration:**
 
-"AOVGuard 2.0 is my MSc project for validating EXR files and AOVs in VFX
+"AOVGuard 1.3.0 is my MSc project for validating EXR files and AOVs in VFX
 lighting, rendering and compositing workflows. It inspects the actual EXR
 structure, applies configurable checks and returns the same structured result
 through a command line interface, a PySide6 interface and machine-readable
@@ -54,11 +57,12 @@ or Multilayer mode.
 Run:
 
 ```powershell
-uv run aovguard-ui
+uv run --extra gui aovguard-ui
 ```
 
 1. Select the real EXR stored in `$exr`.
-2. Choose Rec.709, then briefly show Rec.601 and Custom weights.
+2. Choose the source's scene-linear model, then show Rec.709, Rec.601, ACEScg
+   and Custom weights without suggesting that selecting weights transforms color.
 3. Show individual rule checkboxes.
 4. Click **Inspect Structure**.
 5. Click **Analyze**.
@@ -67,7 +71,13 @@ uv run aovguard-ui
    Sequences tabs. Point out that the GUI opens the most relevant tab and
    selects the first finding automatically.
 8. Select the finding and explain its evidence and recommendation.
-9. Explain that Cancel stops cooperatively after the current frame.
+9. In the development checkout, show **Isolate analysis process** enabled:
+   cancellation stops/reaps the child and closing waits for cleanup without
+   blocking the event loop. Contrast explicit in-process mode, where native
+   I/O must return first. Explain that a frame timeout covers service after
+   readiness, not parent discovery, manual inspection, final rules or export.
+   Released 1.3.0 only has cooperative cancellation; do not imply its existing
+   artifacts include the new controls.
 
 Distinguish objective data errors from contextual warnings. For example, an
 empty emission pass may be valid for a scene without emissive contribution.
@@ -103,12 +113,14 @@ readable summary. State that JSON is the canonical pipeline output.
 Show:
 
 ```powershell
-uv run pytest --cov-fail-under=90
+uv run --locked --extra dev pytest --cov-fail-under=95
 ```
 
-Then show the benchmark result: 60 to 12 application-level reader calls with an
+Then show the historical benchmark result: 60 to 12 application-level reader calls with an
 identical checksum. Mention the timing and memory limitations rather than
 claiming universal performance.
 
-Close with the supported scope and the deliberate limitations: deep EXR,
-complete multipart processing and renderer/DCC integration remain future work.
+Show flat multipart part names/windows and namespaced AOVs when an authorized
+example is available. Close with the deliberate limitations: deep sample data,
+eager native pixel loading, ambiguous part-index identity and renderer/DCC
+integration. These do not imply a measured streaming or memory improvement.

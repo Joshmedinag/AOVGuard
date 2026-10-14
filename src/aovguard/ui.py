@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import sys
 import traceback
 from collections.abc import Collection
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QPoint, QSettings, Qt, QThread, QUrl
+from PySide6.QtCore import QPoint, QSettings, Qt, QThread, QTimer, QUrl, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -55,6 +56,7 @@ from aovguard.core.models import (
 )
 from aovguard.core.status import analysis_status, severity_counts
 from aovguard.discovery.frame_discovery import discover_frames
+from aovguard.gui.controller import AnalysisController
 from aovguard.gui.help_text import (
     LUMINANCE_MODEL_TOOLTIPS,
     SEVERITY_TOOLTIPS,
@@ -71,9 +73,15 @@ from aovguard.gui.presentation import (
     format_percentage_change,
     format_technical_value,
 )
-from aovguard.gui.series import SeriesDisplayMode, build_series_display
+from aovguard.gui.series import (
+    SeriesDisplayMode,
+    build_series_display,
+    sequence_frame_context,
+)
+from aovguard.gui.settings import PreferencesStore, WindowPreferences
 from aovguard.gui.worker import AnalyzeWorker
 from aovguard.gui.worker import build_analysis_options as build_analysis_options
+from aovguard.io.inspector import RGB_SUFFIXES
 from aovguard.io.reader import OpenEXRReader
 from aovguard.reports.comparison import (
     compare_report_payloads,
@@ -106,6 +114,7 @@ RULE_LABELS = {
     "negative_values": "Negative values",
     "extreme_values": "Extreme values",
     "constant_channel": "Constant channels",
+    "technical_range": "Technical ranges",
     "missing_aov": "Missing AOVs",
     "missing_channels": "Missing channels",
     "resolution_mismatch": "Resolution consistency",
@@ -120,6 +129,7 @@ RULE_TOOLTIPS = {
     "negative_values": "Report negative values in supported color AOVs.",
     "extreme_values": "Report finite channel values beyond the configured absolute range.",
     "constant_channel": "Report supported channels that contain one constant value.",
+    "technical_range": "Check all components of explicitly named depth, mask, scalar or vector AOVs. Requires a preset with technical_range.parameters.ranges; bounds and tolerance use the channel's units.",
     "missing_aov": "Check required AOV names defined by the selected preset.",
     "missing_channels": "Check required channels defined by the selected preset.",
     "resolution_mismatch": "Check that every decoded frame has the same resolution.",
@@ -165,6 +175,9 @@ def format_inspection(inspection: FileInspection) -> str:
     lines = [
         f"EXR file: {inspection.path}",
         f"Size: {inspection.width}x{inspection.height}",
+        f"Display window: {inspection.display_width}x{inspection.display_height}",
+        f"Data window coordinates: {inspection.data_window}",
+        f"Display window coordinates: {inspection.display_window}",
         f"Parts: {inspection.part_count}",
         f"Deep: {inspection.is_deep}",
         "",
@@ -177,6 +190,17 @@ def format_inspection(inspection: FileInspection) -> str:
         f"({aov.category_confidence}) [{', '.join(aov.channels)}]"
         for aov in inspection.aovs
     )
+    for part in inspection.parts:
+        lines.extend([
+            "",
+            f"Part {part.index}: {part.name or '(unnamed)'}",
+            f"  View: {part.view or '-'} | Deep: {part.is_deep}",
+            f"  Stored size: {part.width}x{part.height}",
+            f"  Display size: {part.display_width}x{part.display_height}",
+            f"  Data window: {part.data_window}",
+            f"  Display window: {part.display_window}",
+            f"  Source channels: {', '.join(part.channels)}",
+        ])
     if inspection.warnings:
         lines.extend(["", "Warnings:"])
         lines.extend(f"  - {warning}" for warning in inspection.warnings)
@@ -258,6 +282,16 @@ class MainWindow(QMainWindow):
 
         super().__init__()
         self.settings = settings or QSettings()
+        self.preferences_store = PreferencesStore(self.settings)
+        self.analysis_controller = AnalysisController(self)
+        self.analysis_controller.finished.connect(self.on_analysis_finished)
+        self.analysis_controller.error.connect(self.on_analysis_error)
+        self.analysis_controller.cancelled.connect(self.on_analysis_cancelled)
+        self.analysis_controller.log.connect(self.append_log)
+        self.analysis_controller.progress.connect(self.on_progress)
+        self.analysis_controller.idle.connect(self._on_controller_idle)
+        self.analysis_controller.shutdown_ready.connect(self._finish_pending_close)
+        self._analysis_busy = False
         self.setWindowTitle("AOVGuard")
         self.resize(1180, 760)
         self.setStyleSheet(
@@ -269,10 +303,9 @@ class MainWindow(QMainWindow):
 
         self.report: AnalysisReport | None = None
         self.options: AnalysisOptions | None = None
-        self.analysis_thread: QThread | None = None
-        self.worker: AnalyzeWorker | None = None
         self.selected_finding: Finding | None = None
         self.latest_inspection: FileInspection | None = None
+        self._protected_export_inputs: set[Path] = set()
         self._table_default_widths: dict[QTableWidget, tuple[int, ...]] = {}
 
         central = QWidget()
@@ -336,7 +369,7 @@ class MainWindow(QMainWindow):
         )
         config_row.addWidget(self.luminance_label)
         self.luminance_combo = QComboBox()
-        self.luminance_combo.addItems(["Rec.709", "Rec.601", "Custom"])
+        self.luminance_combo.addItems(["Rec.709", "Rec.601", "ACEScg", "Custom"])
         self.luminance_combo.setToolTip(LUMINANCE_MODEL_TOOLTIPS["Rec.709"])
         self.luminance_combo.currentTextChanged.connect(self._update_custom_weights_visibility)
         config_row.addWidget(self.luminance_combo)
@@ -438,18 +471,83 @@ class MainWindow(QMainWindow):
             "Analyze more than one numbered sequence in the selected source"
         )
         discovery_row.addWidget(self.allow_multiple_sequences_checkbox)
+        self.analysis_settings_section.content_layout.addLayout(discovery_row)
+        resource_row = QHBoxLayout()
         self.max_frames_label = _help_label(
             "Frame Limit:",
             "Optional production guardrail. Zero means unlimited; a positive value "
             "refuses analysis when more frames are discovered.",
         )
-        discovery_row.addWidget(self.max_frames_label)
+        resource_row.addWidget(self.max_frames_label)
         self.max_frames_spin = QSpinBox()
         self.max_frames_spin.setRange(0, 1_000_000)
         self.max_frames_spin.setSpecialValueText("Unlimited")
         self.max_frames_spin.setToolTip("Maximum discovered frames allowed before analysis starts.")
-        discovery_row.addWidget(self.max_frames_spin)
-        self.analysis_settings_section.content_layout.addLayout(discovery_row)
+        self.max_frames_label.setBuddy(self.max_frames_spin)
+        resource_row.addWidget(self.max_frames_spin)
+        memory_help = (
+            "Estimated per-frame buffer budget, checked from the EXR header before decoding. "
+            "Unlimited disables this estimate guard. This is not a hard process RSS limit; "
+            "the actual memory peak can be higher."
+        )
+        self.max_memory_label = _help_label("&Memory budget (MiB):", memory_help)
+        resource_row.addWidget(self.max_memory_label)
+        self.max_memory_spin = QSpinBox()
+        self.max_memory_spin.setRange(0, 1_000_000)
+        self.max_memory_spin.setSpecialValueText("Unlimited")
+        self.max_memory_spin.setAccessibleName("Memory budget (MiB)")
+        self.max_memory_spin.setAccessibleDescription(memory_help)
+        self.max_memory_spin.setToolTip(memory_help)
+        self.max_memory_label.setBuddy(self.max_memory_spin)
+        self.setTabOrder(self.allow_multiple_sequences_checkbox, self.max_frames_spin)
+        self.setTabOrder(self.max_frames_spin, self.max_memory_spin)
+        resource_row.addWidget(self.max_memory_spin)
+        self.memory_estimate_label = QLabel("Header estimate; not a hard RSS limit.")
+        self.memory_estimate_label.setWordWrap(True)
+        self.memory_estimate_label.setToolTip(memory_help)
+        resource_row.addWidget(self.memory_estimate_label, 1)
+        self.analysis_settings_section.content_layout.addLayout(resource_row)
+        self.memory_preference_warning = QLabel()
+        self.memory_preference_warning.setWordWrap(True)
+        self.memory_preference_warning.setAccessibleName("Analysis resource preference warning")
+        self.memory_preference_warning.setVisible(False)
+        self.analysis_settings_section.content_layout.addWidget(self.memory_preference_warning)
+        execution_row = QHBoxLayout()
+        isolation_help = (
+            "Run EXR decoding and metric reduction in a separate process so stalled work can "
+            "be stopped. In-process mode cannot interrupt an active native read."
+        )
+        self.isolate_frames_checkbox = QCheckBox("&Isolate analysis process")
+        self.isolate_frames_checkbox.setChecked(True)
+        self.isolate_frames_checkbox.setAccessibleName("Isolate analysis process")
+        self.isolate_frames_checkbox.setAccessibleDescription(isolation_help)
+        self.isolate_frames_checkbox.setToolTip(isolation_help)
+        execution_row.addWidget(self.isolate_frames_checkbox)
+        timeout_help = (
+            "Per-frame deadline for isolated analysis, in seconds. No timeout allows an "
+            "unlimited frame duration. On timeout, the analysis process is stopped. "
+            "This value is ignored in in-process mode and preserved when isolation is re-enabled."
+        )
+        self.frame_timeout_label = _help_label("Frame &timeout (s):", timeout_help)
+        execution_row.addWidget(self.frame_timeout_label)
+        self.frame_timeout_spin = QDoubleSpinBox()
+        self.frame_timeout_spin.setRange(0.0, 86400.0)
+        self.frame_timeout_spin.setDecimals(2)
+        self.frame_timeout_spin.setSingleStep(1.0)
+        self.frame_timeout_spin.setSpecialValueText("No timeout")
+        self.frame_timeout_spin.setAccessibleName("Frame timeout (seconds)")
+        self.frame_timeout_spin.setAccessibleDescription(timeout_help)
+        self.frame_timeout_spin.setToolTip(timeout_help)
+        self.frame_timeout_label.setBuddy(self.frame_timeout_spin)
+        execution_row.addWidget(self.frame_timeout_spin)
+        self.isolation_mode_label = QLabel("Isolated mode can stop a stalled frame.")
+        self.isolation_mode_label.setWordWrap(True)
+        self.isolation_mode_label.setToolTip(isolation_help)
+        execution_row.addWidget(self.isolation_mode_label, 1)
+        self.analysis_settings_section.content_layout.addLayout(execution_row)
+        self.isolate_frames_checkbox.toggled.connect(self._update_isolation_mode)
+        self.setTabOrder(self.max_memory_spin, self.isolate_frames_checkbox)
+        self.setTabOrder(self.isolate_frames_checkbox, self.frame_timeout_spin)
         expected_row = QHBoxLayout()
         self.expected_range_checkbox = QCheckBox("Expected Frame Range")
         self.expected_range_checkbox.setToolTip(
@@ -768,6 +866,19 @@ class MainWindow(QMainWindow):
         metrics_layout.setContentsMargins(0, 0, 0, 0)
         metrics_layout.setSpacing(6)
         series_controls = QHBoxLayout()
+        self.series_sequence_label = _help_label(
+            "Sequence:",
+            "Choose one numbered sequence; statistics and chart points do not mix sequences.",
+        )
+        self.series_sequence_combo = QComboBox()
+        self.series_sequence_combo.setToolTip(
+            "Each numbered sequence has its own luminance median and temporal changes."
+        )
+        self.series_sequence_combo.currentIndexChanged.connect(self.update_series_sequence)
+        self.series_sequence_label.setVisible(False)
+        self.series_sequence_combo.setVisible(False)
+        series_controls.addWidget(self.series_sequence_label)
+        series_controls.addWidget(self.series_sequence_combo, 1)
         series_controls.addWidget(
             _help_label(
                 "Chart AOV:",
@@ -997,6 +1108,34 @@ class MainWindow(QMainWindow):
 
         self._restore_preferences()
 
+    @property
+    def analysis_thread(self) -> QThread | None:
+        """Expose the current thread for integrations using the original window API."""
+
+        return self.analysis_controller.analysis_thread
+
+    @analysis_thread.setter
+    def analysis_thread(self, thread: QThread | None) -> None:
+        self.analysis_controller.analysis_thread = thread
+
+    @property
+    def worker(self) -> AnalyzeWorker | None:
+        """Expose the current worker while the controller retains job ownership."""
+
+        return self.analysis_controller.worker
+
+    @worker.setter
+    def worker(self, worker: AnalyzeWorker | None) -> None:
+        self.analysis_controller.worker = worker
+
+    @property
+    def _close_pending(self) -> bool:
+        return self.analysis_controller.close_pending
+
+    @_close_pending.setter
+    def _close_pending(self, pending: bool) -> None:
+        self.analysis_controller.close_pending = pending
+
     def _prepare_table(self, table: QTableWidget, tooltip: str) -> None:
         table.setToolTip(tooltip)
         table.setSortingEnabled(True)
@@ -1091,111 +1230,105 @@ class MainWindow(QMainWindow):
         return str(candidate.parent) if str(candidate.parent) != "." else ""
 
     def _restore_preferences(self) -> None:
-        geometry = self.settings.value("window/geometry")
-        if geometry is not None:
-            self.restoreGeometry(geometry)
-        self.source_edit.setText(str(self.settings.value("analysis/source", "")))
-        self.rules_edit.setText(str(self.settings.value("analysis/preset", "")))
-        luminance = str(self.settings.value("analysis/luminance", "Rec.709"))
-        if self.luminance_combo.findText(luminance) >= 0:
-            self.luminance_combo.setCurrentText(luminance)
-        self.frame_pattern_edit.setText(str(self.settings.value("analysis/frame_pattern", "*.exr")))
-        self.recursive_checkbox.setChecked(
-            bool(self.settings.value("analysis/recursive", False, type=bool))
-        )
-        self.max_depth_spin.setValue(
-            cast(int, self.settings.value("analysis/max_depth", 1, type=int))
-        )
-        self.allow_multiple_sequences_checkbox.setChecked(
-            bool(
-                self.settings.value(
-                    "analysis/allow_multiple_sequences",
-                    False,
-                    type=bool,
-                )
-            )
-        )
-        self.max_frames_spin.setValue(
-            cast(int, self.settings.value("analysis/max_frames", 0, type=int))
-        )
-        self.expected_start_spin.setValue(
-            cast(int, self.settings.value("analysis/expected_start", 1, type=int))
-        )
-        self.expected_end_spin.setValue(
-            cast(int, self.settings.value("analysis/expected_end", 800, type=int))
-        )
-        self.expected_range_checkbox.setChecked(
-            bool(self.settings.value("analysis/expected_enabled", False, type=bool))
-        )
-        stored_source_mode = str(self.settings.value("analysis/source_mode", SourceMode.AUTO.value))
-        try:
-            self.source_mode_buttons[SourceMode(stored_source_mode)].setChecked(True)
-        except ValueError:
-            self.source_mode_buttons[SourceMode.AUTO].setChecked(True)
-        weight_text = str(
-            self.settings.value("analysis/custom_weights", f"{REC709.r},{REC709.g},{REC709.b}")
-        )
-        try:
-            weights = tuple(float(value) for value in weight_text.split(","))
-        except ValueError:
-            weights = ()
-        if len(weights) == 3:
-            for spin, value in zip(self.custom_weight_spins, weights):
-                spin.setValue(value)
-        self.analysis_settings_section.set_expanded(
-            bool(self.settings.value("sections/analysis", False, type=bool))
-        )
-        self.rules_section.set_expanded(
-            bool(self.settings.value("sections/rules", True, type=bool))
-        )
-        self.log_section.set_expanded(
-            bool(self.settings.value("sections/log", False, type=bool))
-        )
-        selected_rules = str(self.settings.value("analysis/enabled_rules", ""))
-        if selected_rules:
-            enabled = {rule_id for rule_id in selected_rules.split(",") if rule_id}
+        preferences = self.preferences_store.load()
+        if preferences.geometry is not None:
+            self.restoreGeometry(preferences.geometry)
+        self.source_edit.setText(preferences.source)
+        self.rules_edit.setText(preferences.preset)
+        if self.luminance_combo.findText(preferences.luminance) >= 0:
+            self.luminance_combo.setCurrentText(preferences.luminance)
+        self.frame_pattern_edit.setText(preferences.frame_pattern)
+        self.recursive_checkbox.setChecked(preferences.recursive)
+        self.max_depth_spin.setValue(preferences.max_depth)
+        self.allow_multiple_sequences_checkbox.setChecked(preferences.allow_multiple_sequences)
+        self.max_frames_spin.setValue(preferences.max_frames)
+        self.max_memory_spin.setValue(preferences.max_memory_mb)
+        self.isolate_frames_checkbox.setChecked(preferences.isolate_frames)
+        self.frame_timeout_spin.setValue(preferences.frame_timeout_seconds)
+        self._update_isolation_mode(preferences.isolate_frames)
+        self.expected_start_spin.setValue(preferences.expected_start)
+        self.expected_end_spin.setValue(preferences.expected_end)
+        self.expected_range_checkbox.setChecked(preferences.expected_enabled)
+        self.source_mode_buttons[preferences.source_mode].setChecked(True)
+        for spin, value in zip(self.custom_weight_spins, preferences.custom_weights):
+            spin.setValue(value)
+        self.analysis_settings_section.set_expanded(preferences.analysis_expanded)
+        self.rules_section.set_expanded(preferences.rules_expanded)
+        self.log_section.set_expanded(preferences.log_expanded)
+        if preferences.enabled_rules is not None:
+            enabled = set(preferences.enabled_rules)
             for rule_id, checkbox in self.rule_checkboxes.items():
                 checkbox.setChecked(rule_id in enabled)
         elif self.rules_edit.text().strip():
             self.restore_rule_selection(silent=True)
         self._update_custom_weights_visibility(self.luminance_combo.currentText())
+        self.memory_preference_warning.setText(" ".join(preferences.warnings))
+        self.memory_preference_warning.setVisible(bool(preferences.warnings))
+        if preferences.warnings:
+            self.log_section.set_expanded(True)
+            for warning in preferences.warnings:
+                self.append_log(f"Warning: {warning}")
 
     def _save_preferences(self) -> None:
-        self.settings.setValue("window/geometry", self.saveGeometry())
-        self.settings.setValue("analysis/source", self.source_edit.text().strip())
-        self.settings.setValue("analysis/preset", self.rules_edit.text().strip())
-        self.settings.setValue("analysis/luminance", self.luminance_combo.currentText())
-        self.settings.setValue("analysis/frame_pattern", self.frame_pattern_edit.text().strip())
-        self.settings.setValue("analysis/recursive", self.recursive_checkbox.isChecked())
-        self.settings.setValue("analysis/max_depth", self.max_depth_spin.value())
-        self.settings.setValue(
-            "analysis/allow_multiple_sequences",
-            self.allow_multiple_sequences_checkbox.isChecked(),
-        )
-        self.settings.setValue("analysis/max_frames", self.max_frames_spin.value())
-        self.settings.setValue("analysis/expected_enabled", self.expected_range_checkbox.isChecked())
-        self.settings.setValue("analysis/expected_start", self.expected_start_spin.value())
-        self.settings.setValue("analysis/expected_end", self.expected_end_spin.value())
-        self.settings.setValue("analysis/source_mode", self._selected_source_mode().value)
-        self.settings.setValue(
-            "analysis/custom_weights",
-            ",".join(str(spin.value()) for spin in self.custom_weight_spins),
-        )
-        enabled_rules = [
-            rule_id for rule_id, checkbox in self.rule_checkboxes.items() if checkbox.isChecked()
-        ]
-        self.settings.setValue("analysis/enabled_rules", ",".join(enabled_rules))
-        self.settings.setValue("sections/analysis", self.analysis_settings_section.is_expanded())
-        self.settings.setValue("sections/rules", self.rules_section.is_expanded())
-        self.settings.setValue("sections/log", self.log_section.is_expanded())
-        self.settings.sync()
+        self.preferences_store.save(WindowPreferences(
+            geometry=self.saveGeometry(),
+            source=self.source_edit.text().strip(),
+            preset=self.rules_edit.text().strip(),
+            luminance=self.luminance_combo.currentText(),
+            frame_pattern=self.frame_pattern_edit.text().strip(),
+            recursive=self.recursive_checkbox.isChecked(),
+            max_depth=self.max_depth_spin.value(),
+            allow_multiple_sequences=self.allow_multiple_sequences_checkbox.isChecked(),
+            max_frames=self.max_frames_spin.value(),
+            max_memory_mb=self.max_memory_spin.value(),
+            isolate_frames=self.isolate_frames_checkbox.isChecked(),
+            frame_timeout_seconds=self.frame_timeout_spin.value(),
+            expected_enabled=self.expected_range_checkbox.isChecked(),
+            expected_start=self.expected_start_spin.value(),
+            expected_end=self.expected_end_spin.value(),
+            source_mode=self._selected_source_mode(),
+            custom_weights=(
+                self.custom_weight_spins[0].value(), self.custom_weight_spins[1].value(),
+                self.custom_weight_spins[2].value(),
+            ),
+            enabled_rules=tuple(
+                rule_id for rule_id, checkbox in self.rule_checkboxes.items() if checkbox.isChecked()
+            ),
+            analysis_expanded=self.analysis_settings_section.is_expanded(),
+            rules_expanded=self.rules_section.is_expanded(),
+            log_expanded=self.log_section.is_expanded(),
+        ))
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Persist preferences before the window closes."""
+        """Defer closing until a running analysis thread has terminated."""
 
+        if not self.analysis_controller.request_shutdown():
+            self.cancel_analysis()
+            event.ignore()
+            return
+        if self.analysis_controller.unsafe:
+            QMessageBox.warning(
+                self,
+                "Cleanup Not Confirmed",
+                "Closing this window does not confirm that the analysis process stopped.\n\n"
+                + self.analysis_controller.cleanup_failure_message,
+            )
         self._save_preferences()
         super().closeEvent(event)
 
+    @Slot()
+    def _on_thread_finished(self) -> None:
+        self.analysis_controller.finalize()
+
+    @Slot()
+    def _on_controller_idle(self) -> None:
+        self.set_busy(False)
+
+    @Slot()
+    def _finish_pending_close(self) -> None:
+        QTimer.singleShot(0, self.close)
+
+    @Slot(str)
     def append_log(self, message: str) -> None:
         """Append one diagnostic line to the GUI log."""
 
@@ -1208,6 +1341,14 @@ class MainWindow(QMainWindow):
                 model,
                 "Select the RGB weighting model used for color-AOV luminance.",
             )
+        )
+
+    def _update_isolation_mode(self, isolated: bool) -> None:
+        self.frame_timeout_spin.setEnabled(isolated and not self._analysis_busy)
+        self.frame_timeout_label.setEnabled(isolated and not self._analysis_busy)
+        self.isolation_mode_label.setText(
+            "Isolated mode can stop a stalled frame."
+            if isolated else "In-process mode cannot interrupt native reads."
         )
 
     def _set_status(self, text: str, status: str) -> None:
@@ -1232,6 +1373,7 @@ class MainWindow(QMainWindow):
     def set_busy(self, busy: bool) -> None:
         """Enable or disable controls for a running analysis."""
 
+        self._analysis_busy = busy
         for widget in (
             self.analyze_btn,
             self.browse_file_btn,
@@ -1245,6 +1387,8 @@ class MainWindow(QMainWindow):
             self.recursive_checkbox,
             self.allow_multiple_sequences_checkbox,
             self.max_frames_spin,
+            self.max_memory_spin,
+            self.isolate_frames_checkbox,
             self.expected_range_checkbox,
             self.select_all_rules_btn,
             self.clear_rules_btn,
@@ -1261,10 +1405,14 @@ class MainWindow(QMainWindow):
         self.max_depth_spin.setEnabled((not busy) and self.recursive_checkbox.isChecked())
         self.expected_start_spin.setEnabled((not busy) and self.expected_range_checkbox.isChecked())
         self.expected_end_spin.setEnabled((not busy) and self.expected_range_checkbox.isChecked())
+        self._update_isolation_mode(self.isolate_frames_checkbox.isChecked())
         self.cancel_btn.setEnabled(busy)
         self.export_json_btn.setEnabled((not busy) and self.report is not None)
         self.export_html_btn.setEnabled((not busy) and self.report is not None)
         self.compare_json_btn.setEnabled((not busy) and self.report is not None)
+        if self.analysis_controller.unsafe:
+            self.analyze_btn.setEnabled(False)
+            self.inspect_btn.setEnabled(False)
 
     def browse_file(self) -> None:
         """Prompt for one EXR source file."""
@@ -1330,6 +1478,8 @@ class MainWindow(QMainWindow):
     def inspect_source(self) -> None:
         """Inspect the first discovered EXR and present structural details."""
 
+        if self.analysis_controller.unsafe:
+            return
         source = self._source()
         if source is None:
             return
@@ -1434,6 +1584,8 @@ class MainWindow(QMainWindow):
     def start_analysis(self) -> None:
         """Validate selections and launch a background analysis worker."""
 
+        if self.analysis_thread is not None or self.analysis_controller.unsafe:
+            return
         source = self._source()
         if source is None:
             return
@@ -1457,6 +1609,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if rules_config:
+            self._protected_export_inputs.add(Path(rules_config).absolute())
         self.report = None
         self.options = None
         self.latest_inspection = None
@@ -1475,6 +1629,9 @@ class MainWindow(QMainWindow):
         self.series_chart.clear()
         self.series_chart.setVisible(False)
         self.series_aov_combo.clear()
+        self.series_sequence_combo.clear()
+        self.series_sequence_label.setVisible(False)
+        self.series_sequence_combo.setVisible(False)
         self.series_mode_combo.setCurrentIndex(0)
         self.outlier_table.setSortingEnabled(False)
         self.outlier_table.setRowCount(0)
@@ -1525,62 +1682,62 @@ class MainWindow(QMainWindow):
         self.append_log("Starting automatic EXR analysis...")
         self._save_preferences()
 
-        self.analysis_thread = QThread(self)
         custom_weights = (
             self.custom_weight_spins[0].value(),
             self.custom_weight_spins[1].value(),
             self.custom_weight_spins[2].value(),
         )
-        self.worker = AnalyzeWorker(
-            str(source),
-            rules_config=rules_config,
-            luminance_model=self.luminance_combo.currentText(),
-            custom_luminance_weights=custom_weights,
-            selected_rule_ids={
-                rule_id
-                for rule_id, checkbox in self.rule_checkboxes.items()
-                if checkbox.isChecked()
-            },
-            frame_pattern=self.frame_pattern_edit.text().strip() or "*.exr",
-            recursive=self.recursive_checkbox.isChecked(),
-            max_depth=self.max_depth_spin.value(),
-            allow_multiple_sequences=self.allow_multiple_sequences_checkbox.isChecked(),
-            max_frames=self.max_frames_spin.value() or None,
-            expected_frame_range=(
-                (self.expected_start_spin.value(), self.expected_end_spin.value())
-                if self.expected_range_checkbox.isChecked() else None
-            ),
-            source_mode=self._selected_source_mode(),
-        )
-        self.worker.moveToThread(self.analysis_thread)
-
-        self.analysis_thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.on_analysis_finished)
-        self.worker.error.connect(self.on_analysis_error)
-        self.worker.cancelled.connect(self.on_analysis_cancelled)
-        self.worker.log.connect(self.append_log)
-        self.worker.progress.connect(self.on_progress)
-
-        self.worker.finished.connect(self.analysis_thread.quit)
-        self.worker.error.connect(self.analysis_thread.quit)
-        self.worker.cancelled.connect(self.analysis_thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.worker.error.connect(self.worker.deleteLater)
-        self.worker.cancelled.connect(self.worker.deleteLater)
-        self.analysis_thread.finished.connect(self.analysis_thread.deleteLater)
-        self.analysis_thread.start()
+        try:
+            self.analysis_controller.start(
+                str(source),
+                thread_factory=QThread,
+                worker_factory=AnalyzeWorker,
+                worker_arguments={
+                    "rules_config": rules_config,
+                    "luminance_model": self.luminance_combo.currentText(),
+                    "custom_luminance_weights": custom_weights,
+                    "selected_rule_ids": {
+                        rule_id for rule_id, checkbox in self.rule_checkboxes.items()
+                        if checkbox.isChecked()
+                    },
+                    "frame_pattern": self.frame_pattern_edit.text().strip() or "*.exr",
+                    "recursive": self.recursive_checkbox.isChecked(),
+                    "max_depth": self.max_depth_spin.value(),
+                    "allow_multiple_sequences": self.allow_multiple_sequences_checkbox.isChecked(),
+                    "max_frames": self.max_frames_spin.value() or None,
+                    "max_memory_mb": float(self.max_memory_spin.value()) or None,
+                    "isolate_frames": self.isolate_frames_checkbox.isChecked(),
+                    "frame_timeout_seconds": (
+                        self.frame_timeout_spin.value() or None
+                        if self.isolate_frames_checkbox.isChecked() else None
+                    ),
+                    "expected_frame_range": (
+                        (self.expected_start_spin.value(), self.expected_end_spin.value())
+                        if self.expected_range_checkbox.isChecked() else None
+                    ),
+                    "source_mode": self._selected_source_mode(),
+                },
+            )
+        except Exception as exc:
+            self.on_analysis_error(str(exc), traceback.format_exc())
 
     def cancel_analysis(self) -> None:
         """Request cooperative cancellation of the running analysis."""
 
-        if self.worker is None:
+        if not self.analysis_controller.cancel():
             return
-        self.worker.request_cancel()
         self.cancel_btn.setEnabled(False)
-        self.progress_label.setText("Cancelling after the current frame...")
+        isolated = self.worker is not None and self.worker.isolate_frames
+        self.progress_label.setText(
+            "Stopping analysis process..." if isolated else "Cancelling after the current frame..."
+        )
         self._set_status("CANCELLING", "cancelled")
-        self.append_log("Cancellation requested; finishing the current frame.")
+        self.append_log(
+            "Cancellation requested; stopping the active analysis process."
+            if isolated else "Cancellation requested; finishing the current frame."
+        )
 
+    @Slot(int, str)
     def on_progress(self, percent: int, message: str) -> None:
         """Update visible progress from the worker signal."""
 
@@ -1849,6 +2006,7 @@ class MainWindow(QMainWindow):
         location = path if path.is_dir() else path.parent
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(location.resolve())))
 
+    @Slot(object)
     def on_analysis_finished(self, payload: object) -> None:
         """Store and render a successful worker result."""
 
@@ -1856,6 +2014,7 @@ class MainWindow(QMainWindow):
         self.report = report
         self.options = options
         self.set_busy(False)
+        self.analyze_btn.setEnabled(self.analysis_thread is None)
         try:
             self._display_analysis_results(report)
         except Exception as exc:
@@ -1898,18 +2057,42 @@ class MainWindow(QMainWindow):
         )
         self._display_series_chart(self.series_aov_combo.currentText())
 
+    def update_series_sequence(self, _index: int) -> None:
+        """Refresh the selected sequence without mixing its samples with others."""
+
+        self._display_series_chart(self.series_aov_combo.currentText())
+
     def _display_series_chart(self, aov_name: str) -> None:
         if self.report is None or not aov_name:
             self.series_chart.clear()
             self.series_chart.setVisible(False)
             return
+        identities, previous_frames = sequence_frame_context(self.report)
+        uses_sequences = (
+            bool(identities) and self.report.source_kind is SourceKind.NUMBERED_SEQUENCE
+        )
+        selected_sequence = self.series_sequence_combo.currentData()
+        if identities and not selected_sequence:
+            selected_sequence = next(iter(identities.values()))
         raw_samples = [
             (frame_path, frame_aovs[aov_name].avg_luminance)
             for frame_path, frame_aovs in self.report.frame_metrics.items()
             if aov_name in frame_aovs
+            and (not uses_sequences or identities.get(frame_path) == selected_sequence)
         ]
+        if uses_sequences:
+            order = {path: index for index, path in enumerate(identities)}
+            raw_samples.sort(key=lambda sample: order[sample[0]])
         mode_value = self.series_mode_combo.currentData() or SeriesDisplayMode.LUMINANCE.value
-        display = build_series_display(raw_samples, str(mode_value))
+        display = build_series_display(
+            raw_samples,
+            str(mode_value),
+            previous_frames=(
+                previous_frames
+                if uses_sequences
+                else None
+            ),
+        )
         sample_paths = {path for path, _value in display.samples}
         issues: dict[Path, list[str]] = {}
         for finding in self.report.findings:
@@ -1932,6 +2115,7 @@ class MainWindow(QMainWindow):
             issues=issues,
             value_label=display.value_label,
             value_suffix=display.value_suffix,
+            break_before=display.break_before,
         )
         self.series_chart.setVisible(bool(display.samples))
 
@@ -1962,6 +2146,12 @@ class MainWindow(QMainWindow):
         aov_item = self.outlier_table.item(row, 1)
         if path_item is None or aov_item is None:
             return
+        if self.report is not None:
+            identities, _previous = sequence_frame_context(self.report)
+            sequence_key = identities.get(Path(str(path_item.data(FULL_PATH_ROLE))))
+            index = self.series_sequence_combo.findData(sequence_key)
+            if index >= 0:
+                self.series_sequence_combo.setCurrentIndex(index)
         self.series_aov_combo.setCurrentText(aov_item.text())
         self.locate_frame_from_chart(path_item.data(FULL_PATH_ROLE))
 
@@ -2001,6 +2191,19 @@ class MainWindow(QMainWindow):
         self.series_chart.setVisible(False)
         self.series_aov_combo.blockSignals(True)
         self.series_aov_combo.clear()
+        self.series_sequence_combo.blockSignals(True)
+        self.series_sequence_combo.clear()
+        for sequence_key in (
+            report.series_metrics_by_sequence
+            if report.source_kind is SourceKind.NUMBERED_SEQUENCE else ()
+        ):
+            self.series_sequence_combo.addItem(
+                display_path(Path(sequence_key), report.source), sequence_key,
+            )
+        self.series_sequence_combo.blockSignals(False)
+        multiple_sequences = self.series_sequence_combo.count() > 1
+        self.series_sequence_label.setVisible(multiple_sequences)
+        self.series_sequence_combo.setVisible(multiple_sequences)
         self.latest_inspection = report.inspections[0] if report.inspections else None
         self._set_classifiable_aovs(report.inspections)
 
@@ -2048,7 +2251,16 @@ class MainWindow(QMainWindow):
             self.metrics_panel.show_empty("No color AOV metrics are available for this source.")
 
         outlier_count = 0
-        for aov_name, series in report.series_metrics_by_aov.items():
+        series_groups = (
+            report.series_metrics_by_sequence.values()
+            if report.series_metrics_by_sequence and report.source_kind is SourceKind.NUMBERED_SEQUENCE
+            else (report.series_metrics_by_aov,)
+        )
+        for aov_name, series in (
+            (aov_name, series)
+            for group in series_groups
+            for aov_name, series in group.items()
+        ):
             for frame_path in series.outlier_frames:
                 outlier_metrics = report.frame_metrics.get(frame_path, {}).get(aov_name)
                 if outlier_metrics is None:
@@ -2091,9 +2303,12 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(TAB_OUTLIERS, f"Outliers ({outlier_count})")
 
         for aov_name, channel_metrics in report.channel_metrics_by_aov.items():
-            if aov_name in report.metrics_by_aov:
-                continue
             for channel_name, channel_metric in channel_metrics.items():
+                if (
+                    aov_name in report.metrics_by_aov
+                    and channel_name.split("::")[-1].rsplit(".", 1)[-1].casefold() in RGB_SUFFIXES
+                ):
+                    continue
                 self._add_row(
                     self.technical_table,
                     [
@@ -2120,7 +2335,7 @@ class MainWindow(QMainWindow):
                         2: (f"Named EXR component {channel_name} belonging to the {aov_name} AOV."),
                     },
                 )
-        if report.technical_aov_count:
+        if self.technical_table.rowCount():
             self.technical_panel.show_table()
         else:
             self.technical_panel.show_empty(
@@ -2167,12 +2382,26 @@ class MainWindow(QMainWindow):
             else:
                 self.sequence_panel.show_empty("No numbered EXR sequence has been detected.")
 
-        previous_metrics: dict[str, MetricSet] = {}
+        identities, contiguous_previous = sequence_frame_context(report)
+        previous_metrics: dict[str, tuple[Path, MetricSet]] = {}
         for frame_path, aov_metrics in report.frame_metrics.items():
             for aov_name, frame_metric in aov_metrics.items():
-                series = report.series_metrics_by_aov.get(aov_name)
+                frame_sequence_key = identities.get(frame_path)
+                series = (
+                    report.series_metrics_by_sequence.get(frame_sequence_key, {}).get(aov_name)
+                    if frame_sequence_key is not None and report.source_kind is SourceKind.NUMBERED_SEQUENCE
+                    else report.series_metrics_by_aov.get(aov_name)
+                )
                 median = series.median_luminance if series else frame_metric.avg_luminance
-                previous = previous_metrics.get(aov_name, frame_metric)
+                if identities and report.source_kind is SourceKind.NUMBERED_SEQUENCE:
+                    previous_path = contiguous_previous.get(frame_path)
+                    previous = (
+                        report.frame_metrics.get(previous_path, {}).get(aov_name)
+                        if previous_path is not None else None
+                    )
+                else:
+                    previous_entry = previous_metrics.get(aov_name)
+                    previous = previous_entry[1] if previous_entry else None
                 self._add_row(
                     self.frame_table,
                     [
@@ -2188,7 +2417,8 @@ class MainWindow(QMainWindow):
                         format_percentage_change(
                             frame_metric.avg_luminance,
                             previous.avg_luminance,
-                        ),
+                        ) if previous is not None and math.isfinite(previous.avg_luminance)
+                        and math.isfinite(frame_metric.avg_luminance) else "-",
                     ],
                     numeric_columns=(2, 3, 4, 5, 6, 7, 8, 9),
                     color=SEVERITY_COLORS[Severity.INFO],
@@ -2202,7 +2432,7 @@ class MainWindow(QMainWindow):
                     },
                     user_data={0: str(frame_path)},
                 )
-                previous_metrics[aov_name] = frame_metric
+                previous_metrics[aov_name] = (frame_path, frame_metric)
 
         if report.frame_metrics:
             self.frame_panel.show_table()
@@ -2292,28 +2522,60 @@ class MainWindow(QMainWindow):
         if not report.failed_frames:
             self.log_section.set_expanded(False)
 
+    @Slot(str, str)
     def on_analysis_error(self, message: str, details: str) -> None:
         """Recover controls and present a concise analysis failure."""
 
         self.set_busy(False)
         self.log_section.set_expanded(True)
         self.progress_bar.setValue(0)
-        self.progress_label.setText("Analysis failed.")
-        self._set_status("FAIL | ANALYSIS ERROR", "fail")
+        if self.analysis_controller.unsafe:
+            self.progress_label.setText(
+                "Cleanup could not be confirmed. Analysis and inspection blocked until restart."
+            )
+            self._set_status("FAIL | CLEANUP NOT CONFIRMED", "fail")
+            self.status_label.setToolTip(message)
+            self.analyze_btn.setToolTip(message)
+            self.inspect_btn.setToolTip(message)
+            for panel in (
+                self.findings_panel, self.metrics_panel, self.frame_panel,
+                self.outlier_panel, self.technical_panel, self.sequence_panel,
+            ):
+                panel.show_empty(
+                    "Analysis blocked: cleanup not confirmed. "
+                    "Verify the worker process, then restart AOVGuard."
+                )
+        else:
+            self.progress_label.setText("Analysis failed.")
+            self._set_status("FAIL | ANALYSIS ERROR", "fail")
         self.append_log("Analysis failed.")
         self.append_log(f"Error: {message}")
         if details.strip():
             self.append_log(details)
-        QMessageBox.critical(self, "Analysis Error", message)
+        if not (self.analysis_controller.unsafe and self._close_pending):
+            QMessageBox.critical(self, "Analysis Error", message)
 
+    @Slot()
     def on_analysis_cancelled(self) -> None:
         """Recover controls after cooperative cancellation."""
 
         self.set_busy(False)
         self.log_section.set_expanded(True)
-        self.progress_label.setText("Analysis cancelled after the current frame.")
+        isolated = self.worker.isolate_frames if self.worker is not None else self.isolate_frames_checkbox.isChecked()
+        message = (
+            "Analysis cancelled; isolated analysis process stopped."
+            if isolated else "Analysis cancelled after the current frame."
+        )
+        self.progress_label.setText(message)
         self._set_status("CANCELLED", "cancelled")
-        self.append_log("Analysis cancelled after the current frame.")
+        self.append_log(message)
+
+    def _export_input_paths(self) -> tuple[Path, ...]:
+        paths = set(self._protected_export_inputs)
+        preset = self.rules_edit.text().strip()
+        if preset:
+            paths.add(Path(preset).absolute())
+        return tuple(paths)
 
     def export_json(self) -> None:
         """Prompt for and write the current canonical JSON report."""
@@ -2329,7 +2591,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            write_analysis_json(self.report, path, options=self.options)
+            write_analysis_json(
+                self.report, path, options=self.options, protected_paths=self._export_input_paths(),
+            )
         except Exception as exc:
             self.append_log(f"JSON export failed: {exc}")
             self.append_log(traceback.format_exc())
@@ -2355,7 +2619,9 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            write_analysis_html(self.report, path, options=self.options)
+            write_analysis_html(
+                self.report, path, options=self.options, protected_paths=self._export_input_paths(),
+            )
         except Exception as exc:
             self.append_log(f"HTML export failed: {exc}")
             self.append_log(traceback.format_exc())
@@ -2382,6 +2648,7 @@ class MainWindow(QMainWindow):
             return
         try:
             baseline = load_report_payload(path)
+            self._protected_export_inputs.add(Path(path).absolute())
             candidate = build_analysis_report_payload(
                 self.report,
                 options=self.options,
@@ -2438,6 +2705,7 @@ class MainWindow(QMainWindow):
             f"{comparison.changed_aov_count} changed AOVs | "
             f"{len(comparison.new_findings)} new findings | "
             f"{len(comparison.resolved_findings)} resolved findings"
+            + ("\n" + "\n".join(comparison.warnings) if comparison.warnings else "")
         )
         self.tabs.setCurrentIndex(TAB_COMPARISON)
         self.append_log(

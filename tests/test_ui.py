@@ -1,14 +1,17 @@
 import json
 from pathlib import Path
+from time import monotonic, sleep
 
 import Imath
 import numpy as np
 import OpenEXR
 import pytest
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, QThread
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from aovguard.cli import main as cli_main
+from aovguard.core.execution import WorkerCleanupError
 from aovguard.core.models import (
     AnalysisOptions,
     AnalysisReport,
@@ -18,6 +21,7 @@ from aovguard.core.models import (
     FileInspection,
     Finding,
     MetricSet,
+    PartInspection,
     SequenceCheckResult,
     SequenceDescriptor,
     SeriesMetricSet,
@@ -25,6 +29,8 @@ from aovguard.core.models import (
     SourceKind,
     SourceMode,
 )
+from aovguard.gui.controller import AnalysisController
+from aovguard.gui.settings import PreferencesStore, WindowPreferences
 from aovguard.reports.json_report import build_analysis_report_payload
 from aovguard.rules.loader import load_rule_preset
 from aovguard.ui import (
@@ -48,8 +54,8 @@ from aovguard.ui import (
 
 
 @pytest.fixture
-def app():
-    application = QApplication.instance() or QApplication([])
+def app(qt_application):
+    application = qt_application
     application.setOrganizationName("AOVGuardTests")
     application.setApplicationName("AOVGuardTests")
     settings = QSettings()
@@ -119,6 +125,9 @@ def test_build_analysis_options_uses_builtin_model_and_rules() -> None:
         "aov_structure_mismatch",
     )
     assert {definition.id for definition in definitions}.issuperset(options.enabled_rules)
+    assert options.max_memory_mb is None
+    assert options.isolate_frames
+    assert options.frame_timeout_seconds is None
 
 
 def test_build_analysis_options_accepts_custom_luminance() -> None:
@@ -132,6 +141,17 @@ def test_build_analysis_options_accepts_custom_luminance() -> None:
 
     with pytest.raises(ValueError, match="requires R, G and B"):
         build_analysis_options(luminance_model="Custom", rules_config=None)
+
+
+def test_build_analysis_options_accepts_acescg_luminance() -> None:
+    options, _ = build_analysis_options(luminance_model="ACEScg", rules_config=None)
+
+    assert options.luminance_weights == (0.2722287168, 0.6740817658, 0.0536895174)
+
+
+def test_build_analysis_options_rejects_unknown_luminance_model() -> None:
+    with pytest.raises(ValueError, match="Unknown luminance model"):
+        build_analysis_options(luminance_model="unknown", rules_config=None)
 
 
 def test_build_analysis_options_loads_rule_preset(tmp_path: Path) -> None:
@@ -190,6 +210,26 @@ def test_format_inspection_includes_reader_warnings() -> None:
     assert "Warnings:" in text
     assert "Multipart data is only partially supported." in text
     assert summarize_aov_categories(inspection) == "0 AOVs detected."
+
+
+def test_format_inspection_displays_windows_and_view_for_each_part() -> None:
+    inspection = FileInspection(
+        path=Path("stereo.exr"), width=2, height=2, channels=("[part:right]::R",), aovs=(),
+        part_count=2,
+        parts=(PartInspection(
+            index=1, name="right", width=3, height=1, channels=("R",), aovs=(), view="right",
+            data_window=((-1, 2), (1, 2)), display_window=((0, 0), (1919, 1079)),
+        ),),
+    )
+
+    text = format_inspection(inspection)
+
+    assert "Part 1: right" in text
+    assert "View: right" in text
+    assert "Stored size: 3x1" in text
+    assert "Display size: 1920x1080" in text
+    assert "Data window: ((-1, 2), (1, 2))" in text
+    assert "Source channels: R" in text
 
 
 def test_ui_path_and_frame_change_formatting() -> None:
@@ -262,6 +302,7 @@ def test_build_analysis_options_applies_discovery_settings() -> None:
         max_depth=3,
         allow_multiple_sequences=True,
         max_frames=500,
+        max_memory_mb=2048.0,
         expected_frame_range=(1, 800),
     )
 
@@ -270,7 +311,42 @@ def test_build_analysis_options_applies_discovery_settings() -> None:
     assert options.max_depth == 3
     assert options.allow_multiple_sequences
     assert options.max_frames == 500
+    assert options.max_memory_mb == 2048.0
     assert options.expected_frame_range == (1, 800)
+
+
+@pytest.mark.parametrize("budget", [0.0, -1.0, float("nan"), float("inf"), True])
+def test_build_analysis_options_rejects_invalid_memory_budget(budget: float) -> None:
+    with pytest.raises(ValueError, match="[Mm]emory"):
+        build_analysis_options(
+            luminance_model="Rec.709", rules_config=None, max_memory_mb=budget,
+        )
+
+
+def test_build_analysis_options_forwards_isolation_and_frame_timeout() -> None:
+    options, _ = build_analysis_options(
+        luminance_model="Rec.709", rules_config=None,
+        isolate_frames=True, frame_timeout_seconds=6.5,
+    )
+    assert options.isolate_frames
+    assert options.frame_timeout_seconds == 6.5
+    legacy, _ = build_analysis_options(
+        luminance_model="Rec.709", rules_config=None, isolate_frames=False,
+    )
+    assert not legacy.isolate_frames and legacy.frame_timeout_seconds is None
+    with pytest.raises(ValueError, match="isolat"):
+        build_analysis_options(
+            luminance_model="Rec.709", rules_config=None,
+            isolate_frames=False, frame_timeout_seconds=1.0,
+        )
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf"), True])
+def test_build_analysis_options_rejects_invalid_frame_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="[Tt]imeout"):
+        build_analysis_options(
+            luminance_model="Rec.709", rules_config=None, frame_timeout_seconds=timeout,
+        )
 
 
 def test_analyze_worker_runs_common_backend(tmp_path: Path, app) -> None:
@@ -285,9 +361,11 @@ def test_analyze_worker_runs_common_backend(tmp_path: Path, app) -> None:
     payloads: list[object] = []
     errors: list[tuple[str, str]] = []
     progress: list[tuple[int, str]] = []
+    logs: list[str] = []
     worker.finished.connect(payloads.append)
     worker.error.connect(lambda message, details: errors.append((message, details)))
     worker.progress.connect(lambda percent, message: progress.append((percent, message)))
+    worker.log.connect(logs.append)
 
     worker.run()
 
@@ -308,6 +386,8 @@ def test_analyze_worker_runs_common_backend(tmp_path: Path, app) -> None:
     assert options.max_depth == 2
     assert options.allow_multiple_sequences
     assert progress[-1] == (100, "Analysis complete.")
+    assert any("isolated analysis process" in message for message in logs)
+    assert "Per-frame timeout: none." in logs
 
 
 def test_cli_and_gui_produce_equivalent_canonical_payloads(
@@ -342,6 +422,8 @@ def test_cli_and_gui_produce_equivalent_canonical_payloads(
 
     gui_payload["metadata"].pop("generated_utc")
     cli_payload["metadata"].pop("generated_utc")
+    gui_payload.pop("frame_execution", None)
+    cli_payload.pop("frame_execution", None)
     assert gui_payload == cli_payload
 
 
@@ -375,6 +457,34 @@ def test_analyze_worker_preserves_traceback_for_unexpected_errors(
     assert len(errors) == 1
     assert errors[0][0] == "backend bug"
     assert "Traceback" in errors[0][1]
+
+
+@pytest.mark.parametrize("pid", [456789, None])
+def test_worker_cleanup_failure_has_a_distinct_fatal_signal(
+    tmp_path: Path, app, monkeypatch: pytest.MonkeyPatch, pid: int | None,
+) -> None:
+    worker = AnalyzeWorker(str(tmp_path))
+    unsafe_errors: list[tuple[str, str]] = []
+    recoverable_errors: list[tuple[str, str]] = []
+    results: list[object] = []
+    cancellations: list[bool] = []
+    worker.cleanup_failed.connect(lambda message, details: unsafe_errors.append((message, details)))
+    worker.error.connect(lambda message, details: recoverable_errors.append((message, details)))
+    worker.finished.connect(results.append)
+    worker.cancelled.connect(lambda: cancellations.append(True))
+
+    def unreaped_worker(*_args: object, **_kwargs: object) -> None:
+        raise WorkerCleanupError("Worker did not stop.", worker_pid=pid, stage="cleanup")
+
+    monkeypatch.setattr("aovguard.gui.worker.analyze", unreaped_worker)
+    worker.run()
+
+    assert len(unsafe_errors) == 1
+    assert ("worker PID 456789" in unsafe_errors[0][0]) is (pid is not None)
+    assert "restart AOVGuard" in unsafe_errors[0][0]
+    assert "Task Manager" in unsafe_errors[0][0]
+    assert "WorkerCleanupError" in unsafe_errors[0][1]
+    assert recoverable_errors == [] and results == [] and cancellations == []
 
 
 def test_analyze_worker_emits_cancelled_before_first_frame(tmp_path: Path, app) -> None:
@@ -651,7 +761,7 @@ class _SignalStub:
     def __init__(self) -> None:
         self.callbacks: list[object] = []
 
-    def connect(self, callback: object) -> None:
+    def connect(self, callback: object, *_args: object) -> None:
         self.callbacks.append(callback)
 
 
@@ -693,6 +803,8 @@ def test_main_window_starts_worker_with_selected_options(
     window.max_depth_spin.setValue(4)
     window.allow_multiple_sequences_checkbox.setChecked(True)
     window.max_frames_spin.setValue(1000)
+    window.max_memory_spin.setValue(512)
+    window.frame_timeout_spin.setValue(6.5)
     window.source_mode_buttons[SourceMode.COMPARISON].setChecked(True)
     for spin, value in zip(window.custom_weight_spins, (0.25, 0.5, 0.25)):
         spin.setValue(value)
@@ -710,6 +822,9 @@ def test_main_window_starts_worker_with_selected_options(
     assert window.worker.max_depth == 4
     assert window.worker.allow_multiple_sequences
     assert window.worker.max_frames == 1000
+    assert window.worker.max_memory_mb == 512.0
+    assert window.worker.isolate_frames
+    assert window.worker.frame_timeout_seconds == 6.5
     assert window.worker.source_mode is SourceMode.COMPARISON
     assert not window.custom_weights_widget.isHidden()
     assert not window.analyze_btn.isEnabled()
@@ -722,6 +837,399 @@ def test_main_window_starts_worker_with_selected_options(
     assert not window.cancel_btn.isEnabled()
     assert window.status_label.text() == "CANCELLING"
     window.close()
+
+
+def test_analysis_controller_delivers_error_on_gui_thread_and_cleans_up(
+    tmp_path: Path, app,
+) -> None:
+    controller = AnalysisController()
+    errors: list[tuple[str, str, object]] = []
+    idle: list[bool] = []
+    controller.error.connect(
+        lambda message, details: errors.append((message, details, QThread.currentThread()))
+    )
+    controller.idle.connect(lambda: idle.append(True))
+
+    assert controller.start(str(tmp_path))
+    assert controller.has_job
+    assert not controller.start(str(tmp_path))
+    deadline = monotonic() + 5.0
+    try:
+        while controller.has_job and monotonic() < deadline:
+            app.processEvents()
+            sleep(0.001)
+        assert not controller.has_job
+        assert controller.worker is None
+        assert controller.wait(0)
+        assert idle == [True]
+        assert len(errors) == 1 and "No EXR files" in errors[0][0]
+        assert errors[0][1] == ""
+        assert errors[0][2] == app.thread()
+        assert controller.request_shutdown()
+        with pytest.raises(ValueError, match="timeout"):
+            controller.wait(-1)
+    finally:
+        if controller.has_job:
+            controller.cancel()
+            assert controller.wait(5000)
+            app.processEvents()
+            controller.finalize()
+        controller.deleteLater()
+        app.processEvents()
+
+
+def test_analysis_controller_delivers_result_before_becoming_idle(tmp_path: Path, app) -> None:
+    source = _write_exr(tmp_path / "shot.1001.exr")
+    controller = AnalysisController()
+    events: list[str] = []
+    payloads: list[object] = []
+    controller.finished.connect(lambda payload: (events.append("result"), payloads.append(payload)))
+    controller.idle.connect(lambda: events.append("idle"))
+
+    assert controller.start(str(source))
+    deadline = monotonic() + 5.0
+    try:
+        while controller.has_job and monotonic() < deadline:
+            app.processEvents()
+            sleep(0.001)
+        assert not controller.has_job
+        assert events == ["result", "idle"]
+        report, options = payloads[0]
+        assert report.frame_count == 1
+        assert options.enabled_rules
+        assert controller.worker is None
+    finally:
+        if controller.has_job:
+            controller.cancel()
+            assert controller.wait(5000)
+            app.processEvents()
+            controller.finalize()
+        controller.deleteLater()
+        app.processEvents()
+
+
+def test_analysis_controller_recovers_failed_worker_creation(tmp_path: Path, app) -> None:
+    controller = AnalysisController()
+
+    def fail_creation(*_args: object, **_kwargs: object) -> AnalyzeWorker:
+        raise ValueError("Cannot initialize reader")
+
+    with pytest.raises(ValueError, match="initialize reader"):
+        controller.start(str(tmp_path), worker_factory=fail_creation)
+
+    assert not controller.has_job
+    assert controller.worker is None
+    assert not controller.cancel()
+    assert controller.request_shutdown()
+    controller.deleteLater()
+    app.processEvents()
+
+
+def test_preferences_store_recovers_corrupt_saved_values(tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "corrupt.ini"), QSettings.Format.IniFormat)
+    for key, value in {
+        "window/geometry": "not geometry",
+        "analysis/source_mode": "unknown mode",
+        "analysis/max_depth": "bad integer",
+        "analysis/max_frames": True,
+        "analysis/custom_weights": "nan,0.5,0.5",
+        "analysis/recursive": "bad boolean",
+        "sections/rules": "false",
+    }.items():
+        settings.setValue(key, value)
+
+    preferences = PreferencesStore(settings).load()
+
+    assert preferences.geometry is None
+    assert preferences.source_mode is SourceMode.AUTO
+    assert preferences.max_depth == 1
+    assert preferences.max_frames == 0
+    assert preferences.custom_weights == (0.2126, 0.7152, 0.0722)
+    assert not preferences.recursive
+    assert not preferences.rules_expanded
+    assert preferences.enabled_rules is None
+
+
+def test_preferences_store_distinguishes_unset_and_empty_rule_selection(tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "empty_rules.ini"), QSettings.Format.IniFormat)
+    store = PreferencesStore(settings)
+    store.save(WindowPreferences(enabled_rules=(), custom_weights=(0.25, 0.5, 0.25)))
+    reloaded = PreferencesStore(QSettings(str(tmp_path / "empty_rules.ini"), QSettings.Format.IniFormat))
+
+    assert reloaded.load().enabled_rules == ()
+    assert reloaded.load().custom_weights == (0.25, 0.5, 0.25)
+    store.save(WindowPreferences(enabled_rules=None))
+    assert store.load().enabled_rules is None
+
+
+@pytest.mark.parametrize("budget", [0, 2048, 1_000_000])
+def test_memory_budget_preferences_round_trip(tmp_path: Path, budget: int) -> None:
+    settings = QSettings(str(tmp_path / "memory.ini"), QSettings.Format.IniFormat)
+    store = PreferencesStore(settings)
+    store.save(WindowPreferences(max_memory_mb=budget))
+
+    loaded = PreferencesStore(QSettings(str(tmp_path / "memory.ini"), QSettings.Format.IniFormat)).load()
+
+    assert loaded.max_memory_mb == budget
+    assert loaded.warnings == ()
+
+
+@pytest.mark.parametrize("stored", ["broken", "0.5", -4, True, float("nan"), 0.5])
+def test_corrupt_existing_memory_budget_keeps_guard_active_and_warns(
+    tmp_path: Path, stored: object,
+) -> None:
+    settings = QSettings(str(tmp_path / "memory_bad.ini"), QSettings.Format.IniFormat)
+    settings.setValue("analysis/max_memory_mb", stored)
+
+    loaded = PreferencesStore(settings).load()
+
+    assert loaded.max_memory_mb == 1024
+    assert len(loaded.warnings) == 1
+    assert "1024 MiB estimate guard is active" in loaded.warnings[0]
+
+
+def test_oversized_saved_memory_budget_is_bounded_and_warns(tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "memory_large.ini"), QSettings.Format.IniFormat)
+    settings.setValue("analysis/max_memory_mb", 9_000_000)
+
+    loaded = PreferencesStore(settings).load()
+
+    assert loaded.max_memory_mb == 1_000_000
+    assert loaded.warnings and "limited" in loaded.warnings[0]
+    with pytest.raises(ValueError, match="memory budget"):
+        PreferencesStore(settings).save(WindowPreferences(max_memory_mb=-1))
+
+
+def test_fresh_memory_preferences_keep_unlimited_default(tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "memory_new.ini"), QSettings.Format.IniFormat)
+
+    loaded = PreferencesStore(settings).load()
+
+    assert loaded.max_memory_mb == 0
+    assert loaded.warnings == ()
+
+
+def test_memory_budget_is_keyboard_accessible_and_explains_estimate(tmp_path: Path, app) -> None:
+    settings = QSettings(str(tmp_path / "memory_focus.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings)
+    window.analysis_settings_section.set_expanded(True)
+    window.show()
+    app.processEvents()
+    try:
+        assert window.max_memory_label.buddy() is window.max_memory_spin
+        assert window.max_memory_spin.accessibleName() == "Memory budget (MiB)"
+        assert window.max_memory_spin.minimum() == 0
+        assert window.max_memory_spin.maximum() == 1_000_000
+        assert window.max_memory_spin.text() == "Unlimited"
+        tooltip = window.max_memory_spin.toolTip().lower()
+        assert "estimate" in tooltip and "not a hard process rss limit" in tooltip
+        assert "actual memory peak can be higher" in tooltip
+        window.max_frames_spin.setFocus()
+        QTest.keyClick(window.max_frames_spin, Qt.Key.Key_Tab)
+        assert window.max_memory_spin.hasFocus()
+        QTest.keyClick(window.max_memory_spin, Qt.Key.Key_Up)
+        assert window.max_memory_spin.value() == 1
+        QTest.keyClick(window.max_memory_spin, Qt.Key.Key_Backtab)
+        assert window.max_frames_spin.hasFocus()
+        window.set_busy(True)
+        assert not window.max_memory_spin.isEnabled()
+        window.set_busy(False)
+        assert window.max_memory_spin.isEnabled()
+    finally:
+        window.close()
+
+
+def test_memory_budget_restores_and_corruption_is_visible_in_window(tmp_path: Path, app) -> None:
+    settings_path = str(tmp_path / "memory_window.ini")
+    window = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat))
+    window.max_memory_spin.setValue(4096)
+    window.close()
+    reopened = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat))
+    assert reopened.max_memory_spin.value() == 4096
+    reopened.close()
+    corrupted = QSettings(settings_path, QSettings.Format.IniFormat)
+    corrupted.setValue("analysis/max_memory_mb", "bad")
+    corrupted.sync()
+    recovered = MainWindow(settings=corrupted)
+    try:
+        assert recovered.max_memory_spin.value() == 1024
+        assert "saved memory budget was invalid" in recovered.memory_preference_warning.text()
+        assert not recovered.memory_preference_warning.isHidden()
+        assert "1024 MiB estimate guard is active" in recovered.log_output.toPlainText()
+    finally:
+        recovered.close()
+
+
+def test_isolation_preferences_default_to_protection_and_preserve_disabled_timeout(tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "execution.ini"), QSettings.Format.IniFormat)
+    store = PreferencesStore(settings)
+    defaults = store.load()
+    assert defaults.isolate_frames and defaults.frame_timeout_seconds == 0.0
+    assert defaults.warnings == ()
+    store.save(WindowPreferences(isolate_frames=False, frame_timeout_seconds=7.25))
+    loaded = PreferencesStore(QSettings(str(tmp_path / "execution.ini"), QSettings.Format.IniFormat)).load()
+    assert not loaded.isolate_frames
+    assert loaded.frame_timeout_seconds == 7.25
+
+
+@pytest.mark.parametrize("timeout", [10**400, True, float("nan"), float("inf"), -1.0, 86401.0])
+def test_preferences_store_rejects_invalid_timeout_before_writing(tmp_path: Path, timeout: float) -> None:
+    settings = QSettings(str(tmp_path / "invalid_timeout.ini"), QSettings.Format.IniFormat)
+    store = PreferencesStore(settings)
+    store.save(WindowPreferences(source="retained.exr", frame_timeout_seconds=7.25))
+
+    with pytest.raises(ValueError, match="Saved frame timeout must be finite"):
+        store.save(WindowPreferences(source="must_not_be_saved.exr", frame_timeout_seconds=timeout))
+
+    assert store.load().source == "retained.exr"
+    assert store.load().frame_timeout_seconds == 7.25
+
+
+@pytest.mark.parametrize("corrupt", ["broken", 2, []])
+def test_corrupt_existing_isolation_setting_keeps_protection(tmp_path: Path, corrupt: object) -> None:
+    settings = QSettings(str(tmp_path / "execution_bad.ini"), QSettings.Format.IniFormat)
+    settings.setValue("analysis/isolate_frames", corrupt)
+    loaded = PreferencesStore(settings).load()
+    assert loaded.isolate_frames
+    assert loaded.warnings and "Process isolation is enabled" in loaded.warnings[0]
+
+
+@pytest.mark.parametrize("corrupt", ["broken", -1, True, float("nan"), float("inf")])
+def test_corrupt_existing_timeout_selects_explicit_deadline(tmp_path: Path, corrupt: object) -> None:
+    settings = QSettings(str(tmp_path / "timeout_bad.ini"), QSettings.Format.IniFormat)
+    settings.setValue("analysis/frame_timeout_seconds", corrupt)
+    loaded = PreferencesStore(settings).load()
+    assert loaded.frame_timeout_seconds == 30.0
+    assert loaded.warnings and "30 second deadline" in loaded.warnings[0]
+
+
+@pytest.mark.parametrize(("stored", "expected"), [(100000.0, 86400.0), (0.0001, 0.01)])
+def test_saved_timeout_bounds_never_silently_disable_a_positive_guard(
+    tmp_path: Path, stored: float, expected: float,
+) -> None:
+    settings = QSettings(str(tmp_path / "timeout_range.ini"), QSettings.Format.IniFormat)
+    settings.setValue("analysis/frame_timeout_seconds", stored)
+    loaded = PreferencesStore(settings).load()
+    assert loaded.frame_timeout_seconds == expected
+    assert loaded.warnings
+
+
+def test_isolation_controls_are_keyboard_accessible_and_preserve_timeout(tmp_path: Path, app) -> None:
+    settings_path = str(tmp_path / "execution_window.ini")
+    window = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat))
+    window.analysis_settings_section.set_expanded(True)
+    window.show()
+    app.processEvents()
+    try:
+        assert window.isolate_frames_checkbox.isChecked()
+        assert window.frame_timeout_spin.text() == "No timeout"
+        assert window.frame_timeout_label.buddy() is window.frame_timeout_spin
+        assert window.isolate_frames_checkbox.accessibleName() == "Isolate analysis process"
+        assert window.frame_timeout_spin.accessibleName() == "Frame timeout (seconds)"
+        window.max_memory_spin.setFocus()
+        QTest.keyClick(window.max_memory_spin, Qt.Key.Key_Tab)
+        assert window.isolate_frames_checkbox.hasFocus()
+        QTest.keyClick(window.isolate_frames_checkbox, Qt.Key.Key_Tab)
+        assert window.frame_timeout_spin.hasFocus()
+        window.frame_timeout_spin.setValue(7.25)
+        window.isolate_frames_checkbox.setChecked(False)
+        assert not window.frame_timeout_spin.isEnabled()
+        assert window.frame_timeout_spin.value() == 7.25
+        assert "cannot interrupt" in window.isolation_mode_label.text()
+        window.set_busy(True)
+        assert not window.isolate_frames_checkbox.isEnabled()
+        window.isolate_frames_checkbox.setChecked(True)
+        assert not window.frame_timeout_spin.isEnabled()
+        window.set_busy(False)
+        assert window.frame_timeout_spin.isEnabled()
+        window.isolate_frames_checkbox.setChecked(False)
+    finally:
+        window.close()
+    reopened = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat))
+    assert not reopened.isolate_frames_checkbox.isChecked()
+    assert reopened.frame_timeout_spin.value() == 7.25
+    assert not reopened.frame_timeout_spin.isEnabled()
+    reopened.close()
+
+
+def test_corrupt_execution_preferences_are_visible_in_window(tmp_path: Path, app) -> None:
+    settings = QSettings(str(tmp_path / "execution_warning.ini"), QSettings.Format.IniFormat)
+    settings.setValue("analysis/isolate_frames", "invalid")
+    settings.setValue("analysis/frame_timeout_seconds", "invalid")
+    window = MainWindow(settings=settings)
+    try:
+        assert window.isolate_frames_checkbox.isChecked()
+        assert window.frame_timeout_spin.value() == 30.0
+        assert not window.memory_preference_warning.isHidden()
+        assert "Process isolation is enabled" in window.memory_preference_warning.text()
+        assert "30 second deadline" in window.log_output.toPlainText()
+    finally:
+        window.close()
+
+
+def test_starting_in_process_mode_preserves_timeout_but_does_not_forward_it(
+    tmp_path: Path, app, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "shot.0001.exr"
+    source.touch()
+    monkeypatch.setattr("aovguard.ui.QThread", _ThreadStub)
+    monkeypatch.setattr("aovguard.ui.AnalyzeWorker.moveToThread", lambda *_args: None)
+    settings = QSettings(str(tmp_path / "in_process.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings)
+    window.source_edit.setText(str(source))
+    window.frame_timeout_spin.setValue(9.5)
+    window.isolate_frames_checkbox.setChecked(False)
+    window.start_analysis()
+    assert window.worker is not None
+    assert not window.worker.isolate_frames
+    assert window.worker.frame_timeout_seconds is None
+    assert window.frame_timeout_spin.value() == 9.5
+    assert PreferencesStore(settings).load().frame_timeout_seconds == 9.5
+    window.close()
+
+
+def test_isolated_cancellation_message_describes_stopped_process(tmp_path: Path, app) -> None:
+    window = MainWindow(settings=QSettings(str(tmp_path / "cancelled.ini"), QSettings.Format.IniFormat))
+    window.set_busy(True)
+    window.on_analysis_cancelled()
+    assert window.status_label.text() == "CANCELLED"
+    assert "isolated analysis process stopped" in window.progress_label.text()
+    window.close()
+
+
+def test_main_window_preserves_all_rules_disabled_on_restart(tmp_path: Path, app) -> None:
+    settings_path = str(tmp_path / "disabled.ini")
+    window = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat))
+    window.clear_rules()
+    window.close()
+    reopened = MainWindow(settings=QSettings(settings_path, QSettings.Format.IniFormat))
+    try:
+        assert not any(checkbox.isChecked() for checkbox in reopened.rule_checkboxes.values())
+    finally:
+        reopened.close()
+
+
+def test_main_window_keeps_only_auxiliary_multipart_color_channels_in_technical_table(app) -> None:
+    path = Path("multipart.exr")
+    name = "[part:left]::beauty"
+    channels = tuple(f"[part:left]::{suffix}" for suffix in ("R", "G", "B", "A"))
+    inspection = FileInspection(
+        path=path, width=1, height=1, channels=channels,
+        aovs=(AOVDescriptor(name=name, channels=channels, category=AOVCategory.COLOR),),
+    )
+    metrics = ChannelMetricSet(pixel_count=1, avg_value=1.0, min_value=1.0, max_value=1.0)
+    report = AnalysisReport(
+        source=path, frames=(path,), inspections=(inspection,), successful_frames=(path,),
+        metrics_by_aov={name: MetricSet(1.0, 1.0, 1.0, 1)},
+        channel_metrics_by_aov={name: {channel: metrics for channel in channels}},
+    )
+    window = MainWindow()
+    try:
+        window._display_analysis_results(report)
+        assert window.technical_table.rowCount() == 1
+        assert window.technical_table.item(0, 2).text() == "[part:left]::A"
+    finally:
+        window.close()
 
 
 def test_main_window_validates_and_passes_expected_range(
@@ -821,7 +1329,7 @@ def test_main_window_progress_error_and_json_export(
 
     window.export_json()
     assert output.is_file()
-    assert '"schema_version": "1.0"' in output.read_text(encoding="utf-8")
+    assert '"schema_version": "1.2"' in output.read_text(encoding="utf-8")
     assert "Warning: No frames were processed." in window.log_output.toPlainText()
     assert window.metrics_table.item(0, 1).text() == "unknown"
     assert window.progress_label.text().endswith("0 findings.")
@@ -1233,6 +1741,7 @@ def test_main_window_multiple_metrics_do_not_leave_controls_disabled(app) -> Non
 
 def test_main_window_handles_cancelled_analysis(app) -> None:
     window = MainWindow()
+    window.isolate_frames_checkbox.setChecked(False)
     window.set_busy(True)
 
     window.on_analysis_cancelled()

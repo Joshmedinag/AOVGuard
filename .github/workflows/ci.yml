@@ -19,11 +19,33 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ matrix.python-version }}
       - name: Sync dependencies
-        run: uv sync --python ${{ matrix.python-version }} --extra dev
+        run: uv sync --locked --python ${{ matrix.python-version }} --extra dev
       - name: Install Linux GUI runtime
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libegl1
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run python -m pytest --cov-fail-under=90 --cov-report=xml
+        run: uv run --locked pytest --cov-fail-under=95 --cov-report=xml
+      - name: Check lint
+        run: uv run --locked ruff check src tests scripts experiments/benchmark_simulated_sequences.py experiments/benchmark_memory.py
+      - name: Check types
+        run: uv run --locked mypy src/aovguard scripts/create_release.py scripts/install_built_wheel.py scripts/verify_real_sequence.py scripts/verify_gui_sequence.py scripts/verification_memory.py scripts/verification_process.py
+      - name: Validate website links
+        run: uv run --locked python scripts/validate_website.py
+      - name: Build verified source snapshot
+        run: uv run --locked python scripts/create_release.py --output dist/AOVGuard-ci-source.zip
+      - name: Verify source snapshot manifest
+        run: uv run --locked python scripts/create_release.py --verify dist/AOVGuard-ci-source.zip
+      - name: Build wheel
+        run: uv build --wheel --out-dir dist/ci-wheel
+      - name: Create CLI-only environment
+        run: uv venv .venv_cli --python ${{ matrix.python-version }}
+      - name: Install base wheel
+        run: uv run --locked python scripts/install_built_wheel.py --wheel-dir dist/ci-wheel --python .venv_cli
+      - name: Smoke-test CLI without GUI or OpenCV dependencies
+        run: >-
+          uv run --no-project --python .venv_cli python -c
+          "import importlib.util; from aovguard.cli import main;
+          assert importlib.util.find_spec('PySide6') is None;
+          assert importlib.util.find_spec('cv2') is None; main(['--help'])"

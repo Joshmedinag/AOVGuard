@@ -4,11 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 import numpy as np
+
+from aovguard.core.luminance import LuminanceWeights
+
+if TYPE_CHECKING:
+    from aovguard.core.memory import MemoryEstimate
+
+
+def _freeze_rule_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_rule_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_rule_value(item) for item in value)
+    return value
 
 
 class Severity(StrEnum):
@@ -61,6 +75,41 @@ class AOVDescriptor:
     channels: tuple[str, ...]
     category: AOVCategory = AOVCategory.UNKNOWN
     category_confidence: str = "unknown"
+    part_index: int = 0
+    original_name: str | None = None
+    original_channels: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PartInspection:
+    """One EXR part with source channel names, windows and semantic descriptors."""
+
+    index: int
+    name: str
+    width: int
+    height: int
+    channels: tuple[str, ...]
+    aovs: tuple[AOVDescriptor, ...]
+    is_deep: bool = False
+    data_window: tuple[tuple[int, int], tuple[int, int]] | None = None
+    display_window: tuple[tuple[int, int], tuple[int, int]] | None = None
+    view: str | None = None
+
+    @property
+    def display_width(self) -> int:
+        """Return the part's delivery width without changing stored dimensions."""
+
+        if self.display_window is None:
+            return self.width
+        return self.display_window[1][0] - self.display_window[0][0] + 1
+
+    @property
+    def display_height(self) -> int:
+        """Return the part's delivery height without changing stored dimensions."""
+
+        if self.display_window is None:
+            return self.height
+        return self.display_window[1][1] - self.display_window[0][1] + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +124,25 @@ class FileInspection:
     part_count: int = 1
     is_deep: bool = False
     warnings: tuple[str, ...] = ()
+    data_window: tuple[tuple[int, int], tuple[int, int]] | None = None
+    display_window: tuple[tuple[int, int], tuple[int, int]] | None = None
+    parts: tuple[PartInspection, ...] = ()
+
+    @property
+    def display_width(self) -> int:
+        """Return delivery width independently of the stored pixel buffer."""
+
+        if self.display_window is None:
+            return self.width
+        return self.display_window[1][0] - self.display_window[0][0] + 1
+
+    @property
+    def display_height(self) -> int:
+        """Return delivery height independently of the stored pixel buffer."""
+
+        if self.display_window is None:
+            return self.height
+        return self.display_window[1][1] - self.display_window[0][1] + 1
 
     @property
     def unsupported_reason(self) -> str | None:
@@ -82,8 +150,6 @@ class FileInspection:
 
         if self.is_deep:
             return "Deep EXR data is not supported by the MVP backend."
-        if self.part_count > 1:
-            return "Multipart EXR data is detected but not fully supported by the MVP backend."
         return None
 
 
@@ -97,9 +163,11 @@ class FrameData:
     inspection: FileInspection
     aovs: Mapping[str, np.ndarray]
     channels: tuple[str, ...] = ()
+    channel_data: Mapping[str, np.ndarray] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "aovs", MappingProxyType(dict(self.aovs)))
+        object.__setattr__(self, "channel_data", MappingProxyType(dict(self.channel_data)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,8 +261,49 @@ class AnalysisOptions:
     expected_frame_range: tuple[int, int] | None = None
     source_mode: SourceMode = SourceMode.AUTO
     aov_category_overrides: Mapping[str, AOVCategory] = field(default_factory=dict)
+    max_memory_mb: float | None = None
+    isolate_frames: bool = False
+    frame_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
+        weights = LuminanceWeights.from_values(self.luminance_weights)
+        object.__setattr__(self, "luminance_weights", (weights.r, weights.g, weights.b))
+        threshold = self.non_black_threshold
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+            raise ValueError("Non-black threshold must be a finite, non-negative number.")
+        try:
+            valid_threshold = isfinite(threshold) and threshold >= 0
+        except OverflowError:
+            valid_threshold = False
+        if not valid_threshold:
+            raise ValueError("Non-black threshold must be a finite, non-negative number.")
+        object.__setattr__(self, "non_black_threshold", float(threshold))
+        if not isinstance(self.isolate_frames, bool):
+            raise ValueError("Frame isolation must be a boolean.")
+        if self.frame_timeout_seconds is not None:
+            timeout = self.frame_timeout_seconds
+            if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+                raise ValueError("Frame timeout must be a finite, positive number of seconds or None.")
+            try:
+                valid_timeout = isfinite(timeout) and timeout > 0
+            except OverflowError:
+                valid_timeout = False
+            if not valid_timeout:
+                raise ValueError("Frame timeout must be a finite, positive number of seconds or None.")
+            if not self.isolate_frames:
+                raise ValueError("Frame timeout requires process isolation.")
+            object.__setattr__(self, "frame_timeout_seconds", float(timeout))
+        if self.max_memory_mb is not None:
+            budget = self.max_memory_mb
+            if isinstance(budget, bool) or not isinstance(budget, (int, float)):
+                raise ValueError("Memory budget must be a finite, positive number of MiB or None.")
+            try:
+                valid_budget = isfinite(budget) and budget > 0
+            except OverflowError:
+                valid_budget = False
+            if not valid_budget:
+                raise ValueError("Memory budget must be a finite, positive number of MiB or None.")
+            object.__setattr__(self, "max_memory_mb", float(budget))
         if not isinstance(self.source_mode, SourceMode):
             object.__setattr__(self, "source_mode", SourceMode(self.source_mode))
         object.__setattr__(
@@ -316,6 +425,24 @@ class SeriesMetricSet:
 
 
 @dataclass(frozen=True, slots=True)
+class FrameExecutionRecord:
+    """Volatile execution diagnostics, kept separate from baseline rule evidence.
+
+    ``elapsed_seconds`` measures worker startup plus the frame request. A frame
+    deadline starts only after the worker's ready handshake. These diagnostics
+    describe execution, not image quality, and must not influence comparisons.
+    """
+
+    mode: str
+    status: str
+    worker_pid: int | None
+    elapsed_seconds: float
+    timeout_seconds: float | None
+    exit_code: int | None = None
+    stage: str = "measurement"
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisReport:
     """Canonical result shared by reports, CLI and GUI."""
 
@@ -335,6 +462,15 @@ class AnalysisReport:
     frame_metrics: Mapping[Path, Mapping[str, MetricSet]] = field(default_factory=dict)
     source_kind: SourceKind = SourceKind.SINGLE_FILE
     series_metrics_by_aov: Mapping[str, SeriesMetricSet] = field(default_factory=dict)
+    frame_channel_metrics: Mapping[Path, Mapping[str, Mapping[str, ChannelMetricSet]]] = field(
+        default_factory=dict
+    )
+    effective_rules: tuple[Mapping[str, object], ...] = ()
+    series_metrics_by_sequence: Mapping[str, Mapping[str, SeriesMetricSet]] = field(
+        default_factory=dict
+    )
+    memory_estimates: Mapping[Path, MemoryEstimate] = field(default_factory=dict)
+    frame_execution: Mapping[Path, FrameExecutionRecord] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_kind, SourceKind):
@@ -366,6 +502,39 @@ class AnalysisReport:
             self,
             "series_metrics_by_aov",
             MappingProxyType(dict(self.series_metrics_by_aov)),
+        )
+        object.__setattr__(
+            self,
+            "frame_channel_metrics",
+            MappingProxyType({
+                Path(path): MappingProxyType({
+                    name: MappingProxyType(dict(channels))
+                    for name, channels in aovs.items()
+                })
+                for path, aovs in self.frame_channel_metrics.items()
+            }),
+        )
+        object.__setattr__(
+            self, "effective_rules",
+            tuple(
+                MappingProxyType({name: _freeze_rule_value(value) for name, value in rule.items()})
+                for rule in self.effective_rules
+            ),
+        )
+        object.__setattr__(
+            self, "series_metrics_by_sequence",
+            MappingProxyType({
+                name: MappingProxyType(dict(metrics))
+                for name, metrics in self.series_metrics_by_sequence.items()
+            }),
+        )
+        object.__setattr__(
+            self, "memory_estimates",
+            MappingProxyType({Path(path): estimate for path, estimate in self.memory_estimates.items()}),
+        )
+        object.__setattr__(
+            self, "frame_execution",
+            MappingProxyType({Path(path): record for path, record in self.frame_execution.items()}),
         )
 
     @property

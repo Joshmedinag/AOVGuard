@@ -160,7 +160,13 @@ def infer_aov_descriptors(
     beauty_name: str = "beauty",
     cryptomatte_names: Iterable[str] = (),
 ) -> tuple[AOVDescriptor, ...]:
-    """Infer AOVs, using Cryptomatte metadata when supplied by the reader."""
+    """Infer AOVs while preserving all channels and assigning unique names.
+
+    Root RGB uses ``beauty_name`` unless a named layer already owns that name.
+    In that case its visible name is ``beauty_name [root]`` (with a numeric
+    suffix if necessary), so root and named beauty data cannot overwrite one
+    another in mappings keyed by AOV name.
+    """
 
     channel_tuple = tuple(channels)
     cryptomatte_bases = tuple(name for name in cryptomatte_names if name)
@@ -174,10 +180,25 @@ def infer_aov_descriptors(
     descriptors: list[AOVDescriptor] = []
     root_rgb = _rgb_channels(root_channels)
     consumed_root = set(root_rgb)
+    reserved_names = set(named_groups) | (set(root_channels) - consumed_root)
+    used_names: set[str] = set()
+
+    def unique_root_name(preferred: str) -> str:
+        if preferred not in reserved_names and preferred not in used_names:
+            used_names.add(preferred)
+            return preferred
+        candidate = f"{preferred} [root]"
+        counter = 2
+        while candidate in reserved_names or candidate in used_names:
+            candidate = f"{preferred} [root {counter}]"
+            counter += 1
+        used_names.add(candidate)
+        return candidate
+
     if root_rgb:
         descriptors.append(
             AOVDescriptor(
-                name=beauty_name,
+                name=unique_root_name(beauty_name),
                 channels=root_rgb,
                 category=AOVCategory.COLOR,
                 category_confidence="root_rgb_channels",
@@ -187,7 +208,14 @@ def infer_aov_descriptors(
     for channel in root_channels:
         if channel in consumed_root:
             continue
-        descriptors.append(infer_aov_descriptor(channel, (channel,)))
+        # A root channel can also share its spelling with a named layer.
+        # Keep both descriptors instead of silently losing one in a dict.
+        if channel in named_groups or channel in used_names:
+            name = unique_root_name(channel)
+        else:
+            name = channel
+            used_names.add(name)
+        descriptors.append(infer_aov_descriptor(name, (channel,)))
 
     for name, group_channels in named_groups.items():
         if _is_cryptomatte_layer(name, cryptomatte_bases):
@@ -215,6 +243,8 @@ def build_file_inspection(
     is_deep: bool = False,
     warnings: Iterable[str] = (),
     cryptomatte_names: Iterable[str] = (),
+    data_window: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    display_window: tuple[tuple[int, int], tuple[int, int]] | None = None,
 ) -> FileInspection:
     """Build a structured inspection model from backend-provided EXR metadata."""
 
@@ -236,4 +266,6 @@ def build_file_inspection(
         part_count=part_count,
         is_deep=is_deep,
         warnings=tuple(warnings),
+        data_window=data_window,
+        display_window=display_window,
     )

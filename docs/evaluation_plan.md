@@ -22,9 +22,14 @@ The tool should be evaluated with real EXR outputs from DCC/rendering software.
 
 - Validate strict JSON output with NaN and Inf fixtures.
 - Record discovered, successful and failed frame counts.
-- Instrument the reader and verify one `OpenEXR.File` construction per frame.
+- Instrument the reader and distinguish header-only preflight from one pixel
+  decode per supported file; flat multipart decoding includes all part pixels.
 - Compare runtime and peak memory on fixed frame/AOV/resolution datasets.
-- Record test and branch coverage for every release candidate.
+- Record combined statement/branch coverage for every release candidate,
+  separately from any branch-only measurement.
+- Validate named/unnamed/duplicate multipart identities, reordering, removed
+  parts, independent windows and whole-frame failure for deep/partial data.
+- Verify a clean base wheel without Qt/OpenCV, with optional desktop launch.
 
 The current recorded benchmark and its method are available in
 `docs/benchmark_results.md` and `docs/benchmark_methodology.md`. The executable

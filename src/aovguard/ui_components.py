@@ -134,6 +134,7 @@ class LuminanceSeriesChart(QWidget):
         self._point_positions: tuple[tuple[QPointF, Path, float], ...] = ()
         self._value_label = "Average luminance"
         self._value_suffix = ""
+        self._break_before: frozenset[Path] = frozenset()
         self.setMinimumHeight(210)
         self.setMouseTracking(True)
         self.setToolTip(
@@ -171,6 +172,7 @@ class LuminanceSeriesChart(QWidget):
         self._point_positions = ()
         self._value_label = "Average luminance"
         self._value_suffix = ""
+        self._break_before = frozenset()
         self.update()
 
     def set_series(
@@ -184,6 +186,7 @@ class LuminanceSeriesChart(QWidget):
         issues: Mapping[Path, Sequence[str]] | None = None,
         value_label: str = "Average luminance",
         value_suffix: str = "",
+        break_before: Sequence[Path] = (),
     ) -> None:
         """Replace the displayed series and its optional diagnostic evidence."""
 
@@ -210,6 +213,7 @@ class LuminanceSeriesChart(QWidget):
         }
         self._value_label = str(value_label)
         self._value_suffix = str(value_suffix)
+        self._break_before = frozenset(Path(path) for path in break_before)
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -293,7 +297,8 @@ class LuminanceSeriesChart(QWidget):
         )
         painter.setPen(QPen(QColor("#1769aa"), 2.0))
         for current, following in zip(positions, positions[1:]):
-            painter.drawLine(current[0], following[0])
+            if following[1] not in self._break_before:
+                painter.drawLine(current[0], following[0])
         for point, path, _value in positions:
             has_issue = bool(self._issues.get(path))
             is_outlier = path in self._outliers

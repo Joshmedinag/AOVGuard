@@ -4,16 +4,55 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from copy import deepcopy
 from pathlib import Path
+from typing import Callable
 
 from aovguard.core.models import (
     AnalysisReport,
     AOVCategory,
+    ChannelMetricSet,
     FileInspection,
     Finding,
+    PartInspection,
     Severity,
+    SourceKind,
 )
 from aovguard.rules.definitions import RuleDefinition
+from aovguard.rules.technical import TECHNICAL_RANGE_CATEGORIES, technical_range_parameters
+
+_PARAMETER_DEFAULTS: dict[str, dict[str, object]] = {
+    "empty_aov": {"max_luminance": 1e-5, "max_average": 1e-6},
+    "near_empty_aov": {"max_ratio": 0.02, "max_average": 0.001, "empty_max_luminance": 1e-5},
+    "extreme_values": {"max_absolute": 1_000_000.0},
+    "constant_channel": {"tolerance": 0.0, "skip_empty_aovs": True, "empty_max_luminance": 1e-5},
+    "missing_aov": {"required": []},
+    "missing_channels": {"required": []},
+}
+
+
+def effective_rule_parameters(definition: RuleDefinition) -> dict[str, object]:
+    """Snapshot parsed built-in parameters, retaining invalid values for diagnostics."""
+
+    if definition.id == "technical_range":
+        try:
+            return {"ranges": technical_range_parameters(definition)}
+        except ValueError:
+            return deepcopy(dict(definition.parameters))
+    defaults = _PARAMETER_DEFAULTS.get(definition.id, {})
+    parameters = deepcopy({**defaults, **definition.parameters})
+    for name, default in defaults.items():
+        try:
+            if isinstance(default, bool):
+                parameters[name] = _bool_parameter(definition, name, default)
+            elif isinstance(default, (int, float)):
+                parameters[name] = _float_parameter(definition, name, float(default))
+            elif isinstance(default, list):
+                parameters[name] = list(_string_list_parameter(definition, name))
+        except ValueError:
+            # The rule engine reports invalid parameters without aborting the analysis.
+            continue
+    return parameters
 
 
 def _float_parameter(
@@ -21,17 +60,24 @@ def _float_parameter(
     name: str,
     default: float,
 ) -> float:
-    raw_value = definition.parameters.get(name, default)
+    raw_value = definition.parameters.get(
+        name, _PARAMETER_DEFAULTS.get(definition.id, {}).get(name, default),
+    )
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float, str)):
         raise ValueError(f"Rule parameter {name!r} must be numeric.")
-    value = float(raw_value)
+    try:
+        value = float(raw_value)
+    except OverflowError as exc:
+        raise ValueError(f"Rule parameter {name!r} must be a finite, non-negative number.") from exc
     if not math.isfinite(value) or value < 0:
         raise ValueError(f"Rule parameter {name!r} must be a finite, non-negative number.")
     return value
 
 
 def _string_list_parameter(definition: RuleDefinition, name: str) -> tuple[str, ...]:
-    value = definition.parameters.get(name, ())
+    value = definition.parameters.get(
+        name, _PARAMETER_DEFAULTS.get(definition.id, {}).get(name, ()),
+    )
     if isinstance(value, str) or not isinstance(value, Iterable):
         raise ValueError(f"Rule parameter {name!r} must be a list of strings.")
     values = tuple(str(item) for item in value)
@@ -41,7 +87,9 @@ def _string_list_parameter(definition: RuleDefinition, name: str) -> tuple[str, 
 
 
 def _bool_parameter(definition: RuleDefinition, name: str, default: bool) -> bool:
-    value = definition.parameters.get(name, default)
+    value = definition.parameters.get(
+        name, _PARAMETER_DEFAULTS.get(definition.id, {}).get(name, default),
+    )
     if not isinstance(value, bool):
         raise ValueError(f"Rule parameter {name!r} must be a boolean.")
     return value
@@ -80,6 +128,50 @@ def _supports_aov(
         return True
     category = categories.get(aov_name, AOVCategory.UNKNOWN)
     return category in definition.supported_aov_types
+
+
+def _channel_finding(
+    report: AnalysisReport,
+    definition: RuleDefinition,
+    aov: str,
+    channel: str,
+    message: str,
+    metrics: dict[str, object],
+    predicate: Callable[[ChannelMetricSet], bool],
+) -> Finding:
+    samples = {
+        path: channels[aov][channel]
+        for path, channels in report.frame_channel_metrics.items()
+        if aov in channels and channel in channels[aov] and predicate(channels[aov][channel])
+    }
+    affected = tuple(samples)
+    if samples:
+        metrics = {
+            **metrics,
+            "affected_frame_count": len(affected),
+            "per_frame": {
+                str(path): {
+                    "nan_count": value.nan_count,
+                    "posinf_count": value.posinf_count,
+                    "neginf_count": value.neginf_count,
+                    "negative_count": value.negative_count,
+                    "min_value": value.min_value,
+                    "max_value": value.max_value,
+                    "pixel_count": value.pixel_count,
+                }
+                for path, value in samples.items()
+            },
+        }
+    return Finding(
+        rule_id=definition.id,
+        severity=definition.severity,
+        message=message,
+        file=affected[0] if len(affected) == 1 else (None if affected else report.source),
+        aov=aov,
+        channel=channel,
+        metrics=metrics,
+        affected_files=affected,
+    )
 
 
 def validate_unknown_aov(
@@ -142,40 +234,42 @@ def validate_nan_inf(
             if not metrics.has_non_finite:
                 continue
             findings.append(
-                Finding(
-                    rule_id=definition.id,
-                    severity=definition.severity,
-                    message="Non-finite channel values were detected.",
-                    file=report.source,
-                    aov=aov_name,
-                    channel=channel_name,
+                _channel_finding(
+                    report, definition, aov_name, channel_name,
+                    "Non-finite channel values were detected.",
                     metrics={
                         "nan_count": metrics.nan_count,
                         "posinf_count": metrics.posinf_count,
                         "neginf_count": metrics.neginf_count,
                     },
+                    predicate=lambda value: value.has_non_finite,
                 )
             )
-    if findings:
-        return findings
-
+    channel_aovs = {finding.aov for finding in findings}
     for aov_name, aggregate_metrics in report.metrics_by_aov.items():
+        if aov_name in channel_aovs:
+            continue
         if not aggregate_metrics.has_non_finite or not _supports_aov(
             definition, aov_name, categories
         ):
             continue
+        affected = tuple(
+            path for path, aovs in report.frame_metrics.items()
+            if aov_name in aovs and aovs[aov_name].has_non_finite
+        )
         findings.append(
             Finding(
                 rule_id=definition.id,
                 severity=definition.severity,
                 message="Non-finite pixel values were detected.",
-                file=report.source,
+                file=affected[0] if len(affected) == 1 else (None if affected else report.source),
                 aov=aov_name,
                 metrics={
                     "nan_count": aggregate_metrics.nan_count,
                     "posinf_count": aggregate_metrics.posinf_count,
                     "neginf_count": aggregate_metrics.neginf_count,
                 },
+                affected_files=affected,
             )
         )
     return findings
@@ -196,17 +290,14 @@ def validate_negative_values(
             if metrics.negative_count == 0:
                 continue
             findings.append(
-                Finding(
-                    rule_id=definition.id,
-                    severity=definition.severity,
-                    message="Negative channel values were detected.",
-                    file=report.source,
-                    aov=aov_name,
-                    channel=channel_name,
+                _channel_finding(
+                    report, definition, aov_name, channel_name,
+                    "Negative channel values were detected.",
                     metrics={
                         "negative_count": metrics.negative_count,
                         "min_value": metrics.min_value,
                     },
+                    predicate=lambda value: value.negative_count > 0,
                 )
             )
     return findings
@@ -229,18 +320,17 @@ def validate_extreme_values(
             if not math.isfinite(observed) or observed <= max_absolute:
                 continue
             findings.append(
-                Finding(
-                    rule_id=definition.id,
-                    severity=definition.severity,
-                    message="Finite channel values exceed the configured absolute limit.",
-                    file=report.source,
-                    aov=aov_name,
-                    channel=channel_name,
+                _channel_finding(
+                    report, definition, aov_name, channel_name,
+                    "Finite channel values exceed the configured absolute limit.",
                     metrics={
                         "min_value": metrics.min_value,
                         "max_value": metrics.max_value,
                         "max_absolute": max_absolute,
                     },
+                    predicate=lambda value: (
+                        max(abs(value.min_value), abs(value.max_value)) > max_absolute
+                    ),
                 )
             )
     return findings
@@ -418,7 +508,12 @@ def validate_missing_aov(
     required = _string_list_parameter(definition, "required")
     findings: list[Finding] = []
     for inspection in report.inspections:
-        available = {descriptor.name for descriptor in inspection.aovs}
+        available = {
+            name
+            for descriptor in inspection.aovs
+            for name in (descriptor.name, descriptor.original_name)
+            if name is not None
+        }
         for aov_name in required:
             if aov_name not in available:
                 findings.append(
@@ -443,6 +538,7 @@ def validate_missing_channels(
     findings: list[Finding] = []
     for inspection in report.inspections:
         available = set(inspection.channels)
+        available.update(channel for part in inspection.parts for channel in part.channels)
         for channel in required:
             if channel not in available:
                 findings.append(
@@ -457,46 +553,92 @@ def validate_missing_channels(
     return findings
 
 
+def _inspection_baselines(report: AnalysisReport) -> Iterable[tuple[FileInspection, FileInspection]]:
+    """Compare numbered shots independently; comparison sets share one baseline."""
+
+    if report.source_kind is SourceKind.NUMBERED_SEQUENCE and report.sequence_check.sequences:
+        by_path = {inspection.path: inspection for inspection in report.inspections}
+        groups = [
+            [by_path[path] for path in sequence.files if path in by_path]
+            for sequence in report.sequence_check.sequences
+        ]
+    else:
+        groups = [list(report.inspections)]
+    for inspections in groups:
+        if inspections:
+            for inspection in inspections[1:]:
+                yield inspections[0], inspection
+
+
+def _part_regions(inspection: FileInspection) -> dict[str, FileInspection | PartInspection]:
+    if inspection.part_count == 1 or not inspection.parts:
+        return {"primary": inspection}
+    return {
+        (
+            part.aovs[0].name.split("::", 1)[0]
+            if part.aovs else f"[part-index:{part.index}]"
+        ): part
+        for part in inspection.parts
+    }
+
+
 def validate_resolution_mismatch(
     report: AnalysisReport,
     definition: RuleDefinition,
 ) -> list[Finding]:
-    """Report frames whose resolution differs from the first decoded frame."""
+    """Check delivery windows for matching parts within each numbered shot."""
 
-    if len(report.inspections) < 2:
-        return []
-    baseline = report.inspections[0]
     findings: list[Finding] = []
-    for inspection in report.inspections[1:]:
-        if (inspection.width, inspection.height) == (baseline.width, baseline.height):
-            continue
-        findings.append(
-            Finding(
-                rule_id=definition.id,
-                severity=definition.severity,
-                message=(
-                    f"Resolution {inspection.width}x{inspection.height} differs from "
-                    f"baseline {baseline.width}x{baseline.height}."
-                ),
-                file=inspection.path,
-                metrics={
-                    "baseline_width": baseline.width,
-                    "baseline_height": baseline.height,
-                    "width": inspection.width,
-                    "height": inspection.height,
-                },
+    for baseline, inspection in _inspection_baselines(report):
+        baseline_parts = _part_regions(baseline)
+        for identity, part in _part_regions(inspection).items():
+            baseline_part = baseline_parts.get(identity)
+            if baseline_part is None:
+                continue  # Missing/new parts belong to the structure rule.
+            baseline_window = baseline_part.display_window or (
+                (0, 0), (baseline_part.display_width - 1, baseline_part.display_height - 1)
             )
-        )
+            window = part.display_window or (
+                (0, 0), (part.display_width - 1, part.display_height - 1)
+            )
+            if window == baseline_window:
+                continue
+            findings.append(
+                Finding(
+                    rule_id=definition.id,
+                    severity=definition.severity,
+                    message=(
+                        f"Display window {part.display_width}x{part.display_height} "
+                        f"at {window[0]} differs from baseline "
+                        f"{baseline_part.display_width}x{baseline_part.display_height} "
+                        f"at {baseline_window[0]} (part {identity})."
+                    ),
+                    file=inspection.path,
+                    metrics={
+                        "part": identity,
+                        "baseline_file": str(baseline.path),
+                        "baseline_width": baseline_part.display_width,
+                        "baseline_height": baseline_part.display_height,
+                        "width": part.display_width,
+                        "height": part.display_height,
+                        "baseline_display_window": baseline_window,
+                        "display_window": window,
+                        "data_window": part.data_window,
+                    },
+                )
+            )
     return findings
 
 
 def _inspection_aov_signature(
     inspection: FileInspection,
-) -> dict[str, tuple[str, tuple[str, ...]]]:
+) -> dict[str, tuple[str, tuple[str, ...], str | None]]:
+    views = {part.index: part.view for part in inspection.parts}
     return {
         descriptor.name: (
             descriptor.category.value,
             tuple(sorted(descriptor.channels)),
+            views.get(descriptor.part_index),
         )
         for descriptor in inspection.aovs
     }
@@ -508,11 +650,9 @@ def validate_aov_structure_mismatch(
 ) -> list[Finding]:
     """Report frames whose AOV categories or channels change over time."""
 
-    if len(report.inspections) < 2:
-        return []
-    baseline_signature = _inspection_aov_signature(report.inspections[0])
     findings: list[Finding] = []
-    for inspection in report.inspections[1:]:
+    for baseline, inspection in _inspection_baselines(report):
+        baseline_signature = _inspection_aov_signature(baseline)
         signature = _inspection_aov_signature(inspection)
         if signature == baseline_signature:
             continue
@@ -581,6 +721,12 @@ def default_rule_definitions() -> tuple[RuleDefinition, ...]:
             enabled=False,
             severity=Severity.INFO,
             supported_aov_types=color_only,
+        ),
+        RuleDefinition(
+            id="technical_range",
+            enabled=False,
+            severity=Severity.WARNING,
+            supported_aov_types=TECHNICAL_RANGE_CATEGORIES,
         ),
         RuleDefinition(id="missing_aov", enabled=False, severity=Severity.ERROR),
         RuleDefinition(id="missing_channels", enabled=False, severity=Severity.ERROR),

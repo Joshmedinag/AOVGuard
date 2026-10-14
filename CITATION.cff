@@ -5,8 +5,8 @@ type: software
 authors:
   - family-names: "Medina G."
     given-names: "Joshua A."
-version: 1.2.1
-date-released: 2026-09-18
+version: "1.4.0rc1"
+date-released: 2026-10-13
 license: MIT
 abstract: >-
   AOVGuard is a Python tool for automatic OpenEXR structure inspection,

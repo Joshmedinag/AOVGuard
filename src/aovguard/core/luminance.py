@@ -25,14 +25,17 @@ class LuminanceWeights:
     ) -> "LuminanceWeights":
         """Validate optional normalization of three caller-provided weights."""
 
-        vals = tuple(float(v) for v in values)
+        raw_values = tuple(values)
+        if any(isinstance(value, bool) for value in raw_values):
+            raise ValueError("Luminance weights must be finite numbers, not booleans.")
+        vals = tuple(float(v) for v in raw_values)
         if len(vals) != 3:
             raise ValueError("Luminance weights must contain exactly three values.")
         if not all(np.isfinite(vals)):
             raise ValueError("Luminance weights must be finite numbers.")
 
         total = sum(vals)
-        if total <= 0:
+        if not np.isfinite(total) or total <= 0:
             raise ValueError("Luminance weights must have a positive sum.")
 
         if normalize:
@@ -47,6 +50,24 @@ class LuminanceWeights:
 
 REC709 = LuminanceWeights(0.2126, 0.7152, 0.0722)
 REC601 = LuminanceWeights(0.299, 0.587, 0.114)
+# The Y row of the ACES AP1 RGB-to-XYZ matrix for scene-linear ACEScg.
+ACESCG = LuminanceWeights(0.2722287168, 0.6740817658, 0.0536895174)
+AP1 = ACESCG
+
+
+def luminance_weights_for_model(model: str) -> LuminanceWeights:
+    """Resolve a named linear-RGB model without converting the source color space.
+
+    Rec.709, Rec.601 and ACEScg/AP1 identify the source primaries. The caller
+    must select the model matching its scene-linear RGB input.
+    """
+
+    models = {"rec709": REC709, "rec601": REC601, "acescg": ACESCG, "ap1": ACESCG}
+    key = model.strip().lower().replace(".", "")
+    try:
+        return models[key]
+    except KeyError as exc:
+        raise ValueError(f"Unknown luminance model: {model!r}.") from exc
 
 
 def compute_luminance(

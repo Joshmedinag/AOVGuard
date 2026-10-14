@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "description": "Observed Venator v20 denoised beauty only, frames 1065-1208, linear Rec.709; excludes passes and variance patterns.",
+  "metadata": {
+    "status": "pass",
+    "frames_discovered": 144,
+    "frames_processed": 144,
+    "frames_failed": 0,
+    "aovs_detected": 1,
+    "color_aovs_analyzed": 1,
+    "technical_aovs_diagnosed": 0,
+    "summary_by_aov_category": {"color": 1},
+    "summary_by_severity": {}
+  },
+  "dimensions": [1920, 810],
+  "channel_count": 4,
+  "findings": [],
+  "outliers_by_aov": {}
+}

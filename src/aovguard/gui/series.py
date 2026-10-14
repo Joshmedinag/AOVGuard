@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
+
+from aovguard.core.models import AnalysisReport
 
 
 class SeriesDisplayMode(StrEnum):
@@ -31,6 +33,35 @@ class SeriesDisplay:
     outlier_frames: tuple[Path, ...]
     value_label: str
     value_suffix: str = ""
+    break_before: tuple[Path, ...] = ()
+
+
+def sequence_frame_context(
+    report: AnalysisReport,
+) -> tuple[dict[Path, str], dict[Path, Path]]:
+    """Map frames to sequence identities and unambiguous adjacent predecessors.
+
+    Missing numbers, duplicate frame numbers and sequence boundaries never
+    create temporal edges. Failed frames remain in the predecessor map so a
+    caller can detect that their metrics are unavailable instead of skipping
+    over them to an earlier successful frame.
+    """
+
+    identities: dict[Path, str] = {}
+    previous_frames: dict[Path, Path] = {}
+    for sequence in report.sequence_check.sequences:
+        key = str(sequence.directory / sequence.pattern)
+        by_number: dict[int, list[Path]] = {}
+        for path in sequence.files:
+            end = len(path.name) - len(sequence.suffix) - len(".exr")
+            number = int(path.name[len(sequence.prefix) : end])
+            identities[path] = key
+            by_number.setdefault(number, []).append(path)
+        for number, paths in by_number.items():
+            preceding = by_number.get(number - 1, ())
+            if len(paths) == 1 and len(preceding) == 1:
+                previous_frames[paths[0]] = preceding[0]
+    return identities, previous_frames
 
 
 def _previous_percentage(current: float, previous: float) -> float:
@@ -51,34 +82,56 @@ def _previous_percentage(current: float, previous: float) -> float:
 def build_series_display(
     samples: Sequence[tuple[Path, float]],
     mode: SeriesDisplayMode | str = SeriesDisplayMode.LUMINANCE,
+    *,
+    previous_frames: Mapping[Path, Path] | None = None,
 ) -> SeriesDisplay:
     """Transform luminance samples and calculate robust display statistics.
 
-    Non-finite source values are excluded. Delta modes retain the first frame
-    with a zero baseline so every displayed point can still navigate to its
-    corresponding frame.
+    Non-finite source values are excluded and break continuity. An explicit
+    predecessor map constrains changes to adjacent frames within one sequence;
+    changes with an absent or non-finite predecessor are omitted. Without a map,
+    samples form an ordered comparison set and its first point retains a zero
+    baseline for backwards compatibility.
     """
 
     resolved_mode = mode if isinstance(mode, SeriesDisplayMode) else SeriesDisplayMode(mode)
     finite_samples = tuple(
         (Path(path), float(value)) for path, value in samples if math.isfinite(float(value))
     )
+    finite_values = dict(finite_samples)
+    raw_previous = {
+        Path(current[0]): Path(previous[0])
+        for previous, current in zip(samples, samples[1:])
+    }
+    adjacency = raw_previous if previous_frames is None else previous_frames
+    breaks: list[Path] = []
     if resolved_mode is SeriesDisplayMode.LUMINANCE:
         transformed = finite_samples
+        last_displayed: Path | None = None
+        for path, _current in transformed:
+            if last_displayed is not None and adjacency.get(path) != last_displayed:
+                breaks.append(path)
+            last_displayed = path
         value_label = "Average luminance"
         suffix = ""
     else:
         values: list[tuple[Path, float]] = []
-        previous: float | None = None
+        last_displayed = None
         for path, current in finite_samples:
-            if previous is None:
+            previous_path = adjacency.get(path)
+            previous = finite_values.get(previous_path) if previous_path is not None else None
+            if previous is None and previous_frames is None and samples and path == Path(samples[0][0]):
                 value = 0.0
+            elif previous is None:
+                continue
             elif resolved_mode is SeriesDisplayMode.PREVIOUS_DELTA:
                 value = current - previous
             else:
                 value = _previous_percentage(current, previous)
+            if last_displayed is not None and previous_path != last_displayed:
+                breaks.append(path)
             values.append((path, value))
-            previous = current
+            last_displayed = path
         transformed = tuple(values)
         if resolved_mode is SeriesDisplayMode.PREVIOUS_DELTA:
             value_label = "Luminance change from previous frame"
@@ -126,4 +179,5 @@ def build_series_display(
         outlier_frames=tuple(transformed[index][0] for index in outlier_indices),
         value_label=value_label,
         value_suffix=suffix,
+        break_before=tuple(breaks),
     )

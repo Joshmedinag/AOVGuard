@@ -5,10 +5,13 @@ from __future__ import annotations
 import csv
 import json
 import math
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from aovguard.io.output import atomic_text_writer
 
 
 @dataclass(slots=True)
@@ -129,11 +132,10 @@ def write_json(
     thresholds: Thresholds | None = None,
     frames_analyzed: int | None = None,
     extra_metadata: dict[str, Any] | None = None,
+    protected_paths: Iterable[str | Path] = (),
 ) -> None:
-    """Write a JSON report with metadata and AOV results."""
+    """Atomically write legacy JSON with metadata and AOV results."""
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = build_report_payload(
         results,
         input_folder=input_folder,
@@ -142,16 +144,18 @@ def write_json(
         frames_analyzed=frames_analyzed,
         extra_metadata=extra_metadata,
     )
-    with output_path.open("w", encoding="utf-8") as f:
+    inputs = (input_folder,) if input_folder is not None else ()
+    with atomic_text_writer(output_path, protected_paths=(*inputs, *protected_paths)) as f:
         json.dump(payload, f, indent=2)
 
 
-def write_csv(results: list[AOVResult], output_path: str | Path) -> None:
-    """Write a compact CSV report for spreadsheet review."""
+def write_csv(
+    results: list[AOVResult], output_path: str | Path, *,
+    protected_paths: Iterable[str | Path] = (),
+) -> None:
+    """Atomically write a compact CSV report for spreadsheet review."""
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8", newline="") as f:
+    with atomic_text_writer(output_path, protected_paths=protected_paths) as f:
         writer = csv.writer(f)
         writer.writerow(
             ["aov_name", "classification", "non_black_ratio", "avg_luminance", "max_luminance"]

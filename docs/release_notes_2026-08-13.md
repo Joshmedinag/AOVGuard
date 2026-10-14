@@ -1,7 +1,7 @@
 # AOVGuard 2.0 Analysis Improvements
 
-> Historical August 2026 release evidence. The current 1.1.0 verification is
-> recorded in `release_notes_1.1.0.md`.
+> Historical August 2026 release evidence. Later 1.1.0 evidence is recorded in
+> `release_notes_1.1.0.md`; current release verification is in `CHANGELOG.md`.
 
 ## Source intent
 

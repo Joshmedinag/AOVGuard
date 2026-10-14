@@ -45,19 +45,22 @@
         <p class="eyebrow">User guide and technical reference</p>
         <h1>AOVGuard documentation</h1>
         <p class="lead">AOVGuard validates OpenEXR files and render sequences. It detects read errors, NaN values, infinities, empty AOVs, unknown channels, temporal changes, and continuity problems without hiding unrecognized data.</p>
-        <div class="status-note"><strong>Verified status:</strong> 282 tests passed with 95.37% combined statement and branch coverage on Python 3.12.</div>
+        <div class="status-note"><strong>Release candidate 1.4.0rc1:</strong> includes memory admission, isolated execution, optional technical ranges, protected reports and reproducible verification with existing renders. Extracted-source Windows/Python 3.12.12 checks have 1041 passed, 3 skipped and 96.34% combined coverage. This precedes stable 1.4.0; the existing 1.3.0 packages remain separate.</div>
       </header>
 
       <section id="installation">
         <h2>Installation</h2>
-        <p>Windows or Linux, Python 3.12, and <code>uv</code> are recommended. The project supports Python 3.11 and 3.12.</p>
+        <p>Windows or Linux, Python 3.12, and <code>uv</code> are recommended. The project supports Python 3.11 and 3.12 and requires OpenEXR 3.3 or newer.</p>
         <pre><code>cd "C:\path\AOVGuard"
 python -m pip install uv
 uv python install 3.12
-uv sync --python 3.12 --extra dev</code></pre>
+uv sync --locked --python 3.12</code></pre>
         <p>After synchronizing the environment:</p>
-        <pre><code>uv run aovguard-ui
+        <pre><code>uv run --extra gui aovguard-ui
 uv run aovguard --help</code></pre>
+        <p>The base CLI requires NumPy and OpenEXR only, with no Qt or OpenCV dependency. The optional <code>gui</code> extra installs PySide6; use <code>uv sync --locked --extra dev</code> for the complete development/test environment.</p>
+        <pre><code>python -m pip install ./dist/rc-wheel/aovguard-1.4.0rc1-py3-none-any.whl
+python -m pip install "./dist/rc-wheel/aovguard-1.4.0rc1-py3-none-any.whl[gui]"</code></pre>
         <div class="callout"><strong>Important:</strong> AOVGuard does not create demonstration EXRs during installation or analysis. The <code>examples</code> directory remains empty except for its version-control placeholder.</div>
       </section>
 
@@ -66,9 +69,11 @@ uv run aovguard --help</code></pre>
         <ol class="steps">
           <li><strong>Select the source.</strong> Use <em>File</em> for one EXR or <em>Folder</em> for a sequence.</li>
           <li><strong>Load an optional preset.</strong> Presets can be TOML or JSON. Without one, the default rules are applied.</li>
-          <li><strong>Choose the luminance model.</strong> Rec.709 is the usual choice; Rec.601 and custom weights are also available.</li>
+          <li><strong>Choose the luminance model.</strong> Select Rec.709, Rec.601, ACEScg/AP1, or custom weights to match the scene-linear source primaries. Selecting weights does not apply a color transform.</li>
           <li><strong>Set the source mode.</strong> <em>Auto</em> infers the type; <em>Sequence</em> requires numbered frames; <em>Comparison</em> treats EXRs as independent samples.</li>
           <li><strong>Review discovery settings.</strong> Adjust the pattern, recursive search, depth, multiple sequences, frame limit, and expected range.</li>
+          <li><strong>Development memory budget.</strong> <em>Memory budget (MiB)</em> uses 0 / Unlimited for disabled, which is the fresh/older-settings default. Invalid saved values restore 1024 MiB with a visible warning.</li>
+          <li><strong>Development execution controls.</strong> Keep <em>Isolate analysis process</em> enabled (the default). <em>Frame timeout (s)</em> uses 0 / No timeout, or a positive frame service deadline. Disabling isolation prevents timeout use and leaves native cancellation cooperative.</li>
           <li><strong>Use Inspect Structure.</strong> Check resolution, parts, channels, AOVs, and categories before reading pixels.</li>
           <li><strong>Run Analyze.</strong> Progress shows processed frames, and read failures are retained as findings.</li>
           <li><strong>Review and export.</strong> Filter findings, navigate to outliers, and generate JSON or HTML.</li>
@@ -80,6 +85,7 @@ uv run aovguard --help</code></pre>
           <div><strong>Sequence</strong><p>Enables gap, duplicate, and padding validation. It does not allow numbered frames to be mixed with loose EXRs.</p></div>
           <div><strong>Comparison</strong><p>Compares deliberately independent samples and avoids treating naming differences as sequence gaps.</p></div>
         </div>
+        <p>In isolated mode, <em>Cancel</em> stops and reaps the active child. Closing waits for child/thread cleanup while the event loop remains active. One process is reused sequentially; a timeout or crash fails its exact frame and allows a replacement for the next. Invalid stored execution modes restore isolation; invalid timeouts select 30 seconds with visible guidance.</p>
       </section>
 
       <section id="sequences">
@@ -96,6 +102,10 @@ uv run aovguard --help</code></pre>
         <p>A missing frame inside the expected range is an error. Discovered frames outside that range produce a warning. Do not use this option in <em>Comparison</em> mode.</p>
         <pre><code>uv run aovguard check-sequence "C:\renders\shot" --expected-frame-range 1 800</code></pre>
         <p><code>check-sequence</code> inspects names only; it does not decode pixels. It returns exit code 1 when frames are missing or numbers fall outside the declared range.</p>
+        <h3>Per-frame memory admission in the candidate</h3>
+        <pre><code>uv run aovguard analyze ./renders --max-memory-mb 4096 --json ./reports/report.json --html ./reports/report.html</code></pre>
+        <p>The positive finite budget is in MiB (1,048,576 bytes); fractions are accepted. Omit the flag to disable it; CLI 0 is invalid. Consistent headers cover all flat parts and physical channels, including unknown, ignored, alpha/AUX and Cryptomatte data. Category or AOV selection does not shrink the estimate. An over-budget frame gets an exact-file <code>memory_budget</code> error before pixels, retains its header/breakdown and is counted as failed while other frames continue. Header failures do not fall back to unguarded reads.</p>
+        <p>Model <code>flat-working-set-v1</code> counts 4 native + 4 promotion + 8 stack bytes per channel/pixel, 32 scratch bytes per pixel in the largest stored part, and 64 MiB fixed reserve, then rounds up a 1.25 safety factor. It uses data windows and worst-case promotions without claiming exact header pixel types. This is not an OS/global RSS cap; report histories, GUI objects, decoder internals and concurrent file changes remain outside a hard bound.</p>
       </section>
 
       <section id="results">
@@ -169,6 +179,22 @@ severity = "warning"
 [rules.extreme_values.parameters]
 max_absolute = 1000000.0</code></pre>
         <p>Integrity rules can apply to technical channels. Artistic rules such as <code>empty_aov</code> and <code>near_empty_aov</code> are restricted to color. The interface can save an unknown-AOV classification to the preset only after explicit confirmation.</p>
+        <h3>Per-AOV technical ranges</h3>
+        <p>The development <code>technical_range</code> rule is disabled by default. It defines inclusive bounds for each project depth, mask, scalar or vector AOV. Every component is checked, with exact frame and channel evidence in <em>Findings</em>, JSON and HTML.</p>
+        <pre><code>[rules.technical_range]
+enabled = true
+severity = "warning"
+
+[rules.technical_range.parameters.ranges.Z]
+min = 0.0
+
+[rules.technical_range.parameters.ranges.matte]
+min = 0.0
+max = 1.0
+tolerance = 0.000001</code></pre>
+        <p>Add these tables to a preset with <code>nan_inf</code> enabled and classify <code>matte = "mask"</code> under <code>[aov_categories]</code> if appropriate. Names are examples: use the actual AOVs and project units. A preset replaces the defaults; retain the other checks you need.</p>
+        <p>At least one finite <code>min</code> or <code>max</code> is required. Tolerance is absolute, not a percentage, and defaults to zero. Targets are exact and case-sensitive, with no wildcards; quote complete multipart identities such as <code>"[part:left]::Z"</code>. A target absent from all inspections, an invalid configuration or a non-technical category produces <code>rule_error</code>. Also use <code>missing_aov</code> to require presence in every frame.</p>
+        <p>Load the preset and enable <em>Technical ranges</em> in the interface. The rule reuses finite extrema: it does not reread or modify pixels, or count/locate out-of-range pixels. Cryptomatte, color, unknown and ignored channels cannot receive this policy. Units are not inferred and vector lengths are not validated.</p>
       </section>
 
       <section id="cli">
@@ -180,20 +206,39 @@ max_absolute = 1000000.0</code></pre>
         <h3>Recursive discovery</h3>
         <pre><code>uv run aovguard analyze "C:\renders" --frame-pattern "shot.*.exr" --recursive --max-depth 2</code></pre>
         <p>For safety, multiple numbered sequences require <code>--allow-multiple-sequences</code>. Use <code>--max-frames 1000</code> as a size limit and <code>--fail-on-warning</code> for strict publishing.</p>
+        <h3>Isolated execution and timeouts in the candidate</h3>
+        <pre><code>uv run aovguard analyze ./renders --frame-timeout-seconds 60 --max-memory-mb 4096 --json ./reports/report.json
+uv run aovguard analyze ./renders --in-process --json ./reports/in-process.json</code></pre>
+        <p>Canonical CLI/GUI analysis isolates frames by default in one reusable sequential child. The optional positive finite timeout starts after its ready handshake and includes header inspection, memory admission, native decode, reductions and IPC. Startup has a separate 30-second deadline; startup/cleanup can add time. Omitting the timeout leaves frame duration unlimited, not isolation disabled. <code>frame_timeout</code> or <code>worker_crash</code> fails the exact frame, reaps the child and permits restart for the next.</p>
+        <p><code>--in-process</code> opts out, cannot interrupt native I/O and rejects a simultaneous timeout before decode. The generic Python API remains opt-in through <code>AnalysisOptions(isolate_frames=True, frame_timeout_seconds=60)</code>; an isolated custom reader needs a supported process specification. No parallel processing, cache, security sandbox or hard RSS cap is added.</p>
+        <p>Isolated API scripts must call analysis from a function under <code>if __name__ == "__main__":</code>. Notebook/REPL callers should use the default in-process API or run the external CLI, with no silent fallback. These controls apply to canonical analysis, not standalone header inspection or legacy commands.</p>
+        <p>Discovery, final rule evaluation and export also run in the parent outside the frame deadline. Slow folder/NFS listing and manual <em>Inspect Structure</em> have no hard job-wide time limit from this option.</p>
         <h3>Exit codes</h3>
         <ul>
           <li><code>0</code>: PASS, or WARNING when strict mode was not requested.</li>
           <li><code>1</code>: FAIL, read/configuration error, or WARNING with <code>--fail-on-warning</code>.</li>
+          <li><code>130</code>: Ctrl+C during canonical analysis, after child cleanup.</li>
+          <li><code>2</code>: invalid command syntax or incompatible in-process/timeout options.</li>
           <li><code>check-sequence</code> also returns 1 for an incomplete expected range.</li>
         </ul>
       </section>
 
       <section id="reports">
         <h2>Reports and baseline comparison</h2>
-        <p>JSON is the canonical machine-readable report. It records the version, options, source, discovered/processed/failed frames, AOV inventory, metrics, series, sequences, and findings without emitting non-standard NaN/Infinity tokens.</p>
+        <p>JSON is the canonical machine-readable report, using analysis schema <code>1.2</code>. It records the version, options, effective rules, source, discovered/processed/failed frames, AOV inventory, per-frame channel metrics, each part's original name/view/windows, separate sequence series, and findings without emitting non-standard NaN/Infinity tokens.</p>
         <p>HTML presents the same result for human review, including status, configuration, metrics, technical diagnostics, sequences, findings, and recommendations.</p>
+        <p>The development version publishes each report using a temporary file and atomic replacement. A write failure before replacement preserves the previous report. This protection is automatic for JSON, HTML, comparison JSON and legacy JSON/CSV exports.</p>
+        <p>Destinations cannot be EXRs, symbolic links, read-only files or known inputs. The CLI rejects duplicate output paths, including file aliases; the GUI also protects presets used for analyses and baselines loaded in the window. A permission or file-lock failure keeps the analysis available for another export attempt.</p>
+        <p>Publication is per file: if JSON succeeds and HTML fails, JSON stays published. Writers are not coordinated and power-loss durability or network-storage behavior are not guaranteed. Forced termination can leave a <code>.tmp</code> sibling; existing complete reports are not truncated during writing.</p>
         <pre><code>uv run aovguard compare-reports reports\baseline.json reports\candidate.json --json reports\comparison.json</code></pre>
         <p>The comparison identifies added or removed AOVs, metric changes, new findings, and resolved problems. In the GUI, analyze the candidate first and then use <em>Compare Baseline</em>.</p>
+        <p>Contradictory recorded luminance weights, thresholds, category overrides, source interpretation, or active rules reject comparison. Disabled rules do not affect compatibility; changing active range bounds does. A missing or non-finite metric is <code>unavailable</code>, not <code>unchanged</code>. Analysis schemas <code>1.0</code>, <code>1.1</code> and <code>1.2</code> are readable, with a warning when historical compatibility cannot be fully established. Finding comparison includes affected source-relative files and metric evidence; the comparison output has its own schema <code>1.0</code>.</p>
+        <p>Every supported physical channel receives integrity checks, including alpha and auxiliary components; UINT ID arrays preserve exact integers. Root RGB alongside a named beauty layer appears as <code>beauty [root]</code>. Numbered sequence deltas require adjacent frame numbers and do not cross missing or failed frames.</p>
+        <p>Flat multipart parts remain separate: unique names produce identities such as <code>[part:left]::beauty</code>, with percent escaping for delimiter characters. Unnamed or duplicate names use part-index fallback. Names, views and data/display windows remain available for each part. Any deep part or incomplete decode rejects the whole frame; resolution and structure baselines remain separate per numbered sequence.</p>
+        <pre><code>uv run aovguard analyze ./renders --luminance-model acescg --json ./reports/acescg.json</code></pre>
+        <p>ACEScg expects linear AP1 RGB and uses Y weights <code>(0.2722287168, 0.6740817658, 0.0536895174)</code>. Custom <code>--luminance-weights R G B</code> overrides the named model.</p>
+        <p>Development memory fields are additive to schema 1.2: <code>metadata.options.max_memory_mb</code>, model/units/caveat and per-file <code>memory_estimates</code>. HTML shows budget and admission decision. The budget is not a semantic baseline constraint for accepted metrics, although different admitted scopes can change aggregates and findings.</p>
+        <p>Execution fields are also additive: <code>metadata.options.isolate_frames</code>, <code>metadata.options.frame_timeout_seconds</code> and per-file <code>frame_execution</code> (mode, status, worker PID, elapsed seconds, timeout, exit code and stage). HTML exposes the same diagnostics. Elapsed time can include startup, frame service and cleanup and is not a decode-only benchmark. Volatile PID/timing and execution policy are ignored for baseline compatibility when numeric evidence is identical; failed frames can still change findings and aggregates.</p>
       </section>
 
       <section id="troubleshooting">
@@ -210,28 +255,79 @@ max_absolute = 1000000.0</code></pre>
           <dt>Technical values are extremely large</dt>
           <dd>They may be encoded IDs. The table uses scientific notation; decide from the category rather than magnitude alone.</dd>
           <dt>The interface appears frozen</dt>
-          <dd>Analysis runs in a worker, and cancellation occurs after the current frame finishes. Large EXRs can take time during that read.</dd>
+          <dd>Keep process isolation enabled in the development checkout. Cancel stops/reaps the active child; closing waits for child/thread cleanup without blocking the event loop. In-process mode must wait for native reads to return.</dd>
+          <dt><code>frame_timeout</code> or <code>worker_crash</code></dt>
+          <dd>Review the exact file and execution stage/exit code. Check incomplete input, storage latency or a deadline that is too short; increase the deadline deliberately if appropriate. The failed frame remains recorded and later frames can restart in a replacement child.</dd>
+          <dt>Fatal <code>WorkerCleanupError</code></dt>
+          <dd>Cleanup could not confirm that the child/receiver stopped. The job aborts, the executor is not reusable and the GUI blocks new analyses. Check the visible PID/error details and any remaining analysis process, then restart AOVGuard; do not terminate unrelated Python jobs. Bounded waits cannot guarantee OS termination of an unkillable process.</dd>
         </dl>
       </section>
 
       <section id="limitations">
         <h2>Known limitations</h2>
         <ul>
-          <li>Deep EXR and multipart structures are detected, but the current backend does not analyze them completely.</li>
+          <li>Flat multipart is supported. Deep sample data remains unsupported; any deep part or partial decode invalidates the entire frame.</li>
+          <li>Unique named-part identity is stable while multipart. A two-part file becoming single-part returns to historical unqualified keys. Unnamed/duplicate identities depend on index, so arbitrary reordering is ambiguous.</li>
           <li>The tool does not understand artistic intent; thresholds must be calibrated per production.</li>
           <li>Category inference is conservative. Studio-specific names may require a preset.</li>
           <li>The expected range supports exactly one numbered sequence and does not replace farm-management software.</li>
           <li>Baseline reports compare AOVGuard evidence; they do not perform visual image comparison.</li>
+          <li>The native API eagerly loads all part pixels. Frame references are released after measurement, but this does not demonstrate streaming or a lower measured peak RSS. Small benchmarks do not establish 4K capacity.</li>
+          <li>Pixel statistics cover stored <code>dataWindow</code> pixels; delivery resolution uses <code>displayWindow</code>. Autocrop can alter average luminance without changing the delivery canvas.</li>
+          <li>Color space is selected explicitly. Signed ACEScg values can be valid, so negative-value thresholds need production context.</li>
+          <li>The memory guard is an admission estimate, not a global/hard cap. A source can change between header and eager pixel opens. Isolation can stop the child but is not a security sandbox or allocator cap; in-process native I/O remains non-interruptible. Caching, parallel frame processing, automatic renderer-specific semantics and table virtualization remain future work.</li>
+          <li>The frame deadline covers service after readiness, not startup/cleanup or total job time. Startup has a separate 30-second deadline; frame duration is unlimited by default.</li>
+          <li>Unconfirmed child/receiver cleanup is fatal and stops work instead of silently replacing the worker. An OS-level unkillable process is outside a guaranteed termination bound.</li>
         </ul>
       </section>
 
       <section id="verification">
-        <h2>Development verification</h2>
-        <pre><code>$env:OPENCV_IO_ENABLE_OPENEXR="1"
-uv run python -m pytest --cov-fail-under=95
-uv run ruff check src tests scripts experiments/benchmark_simulated_sequences.py
-uv run mypy</code></pre>
-        <p>Latest verified run: <strong>282 tests passed</strong>, <strong>95.37% coverage</strong>, Ruff clean, and strict mypy successful across 39 modules. Tests create EXRs only inside temporary directories; the product does not generate demonstration renders.</p>
+        <h2>Candidate verification</h2>
+        <p>The extracted-source candidate suite has <strong>1041 passed, 3 skipped and 96.34% combined application statement/branch coverage</strong>. Ruff and mypy pass. Type checks target Windows and Linux; that is not an executed Linux suite. Remote results for each revision are available in <a href="https://github.com/Joshmedinag/AOVGuard/actions">GitHub Actions</a>.</p>
+        <h3>Existing render sequences</h3>
+        <div class="verification-table" tabindex="0" role="region" aria-label="Maya and Venator results; horizontal scrolling available">
+          <table>
+            <caption>External sequences analyzed without distributing source EXRs</caption>
+            <thead><tr><th scope="col">Delivery</th><th scope="col">Frames read</th><th scope="col">Channels</th><th scope="col">Outcome</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Maya/Arnold</th><td>301/301</td><td>56; 7 color AOVs, 8 Cryptomatte and N/Z</td><td>WARNING: empty <code>volume</code></td></tr>
+              <tr><th scope="row">Venator masters</th><td>144/144</td><td>55; 18 color AOVs</td><td>WARNING: empty <code>beauty_bridge_solar</code> and localized <code>beauty_ship_emission</code></td></tr>
+              <tr><th scope="row">Venator denoised beauty</th><td>144/144</td><td>4 RGBA</td><td>PASS, no findings under the selected rules</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>No NaN or infinity was found. Venator masters retain 15 atypical AOV-frame samples across 9 unique frames; this alone does not prove a render defect. CLI/GUI reports match and acceptance covers navigation, baseline comparison, cancellation, restart, exports and cleanup. Warnings remain visible until the scene is interpreted.</p>
+        <figure class="verification-figure">
+          <img src="assets/aovguard-venator-rc-metrics.png" width="1460" height="1160" loading="lazy" alt="Venator beauty luminance chart: 144 readable frames, 18 AOVs and two retained warnings">
+          <figcaption>Current interface reconstructed from the real Venator test JSON. Visible paths are anonymized; metrics are unchanged and no EXR was reread to produce this capture.</figcaption>
+        </figure>
+        <figure class="verification-figure">
+          <img src="assets/aovguard-venator-rc-outliers.png" width="1460" height="980" loading="lazy" alt="Fifteen real Venator outlier samples with beauty_sun_key frame 1065 selected">
+          <figcaption>Real outliers in two AOVs near the start of the shot. Navigation to frame 1065 was checked in automated execution; this capture reconstructs its evidence.</figcaption>
+        </figure>
+        <h3>Repeat a verification</h3>
+        <pre><code>uv run --locked python -m scripts.verify_real_sequence RENDER_FOLDER --frame-pattern "Venator_v20_xpu_passes.*.exr" --expected-frame-range 1065 1208 --luminance-model rec709 --expect config/verification/venator-master.json --output-directory dist/verification-venator-new --gui --check-cancellation</code></pre>
+        <p>Replace <code>RENDER_FOLDER</code> with your external directory and use a new destination. Profiles in <code>config/verification</code> describe expected outcomes, not rule presets that suppress warnings. Default preservation compares names, sizes and timestamps; <code>--hash-source</code> adds SHA-256 before and after. Full reports and private paths stay outside the public repository. The verifier is supplied with the checkout or source ZIP.</p>
+        <h3>Historical checkpoints</h3>
+        <p>Local packaging verification on 2026-10-12: <strong>848 passed, 2 skipped</strong> on Windows/Python 3.12.12, <strong>96.21% combined application statement/branch coverage</strong> in 51.38 s; Python 3.11.14 had 848 passed, 2 skipped, with <strong>96.17%</strong> in 47.11 s. Skips concern POSIX-only raw IPC fragments and unprivileged Windows symlinks. Both suites used locked NumPy 2.4.6 / OpenEXR 3.4.12; Ruff passed and mypy checked 48 application modules plus the packager.</p>
+        <p>The 81 new packaging cases cover reproducibility, excluded data, manifests, altered/incomplete archives, unsafe paths and publication failures. The packager separately reached 98.79% coverage. The preceding export milestone had 767 passing tests and 96.21% on both Python versions; its 50 added cases cover interrupted writes, input aliases, duplicate destinations and GUI retries. Report protection is per file, not a transaction across multiple reports.</p>
+        <p>The earlier technical-range milestone had 717 passing tests (96.01% on Python 3.12; 96.05% on 3.11). Its 49 added cases cover bounds, tolerance, technical components, invalid policies, Cryptomatte protection, frame/part evidence, baselines and CLI/GUI integration. An existing Full-HD EXR passed an isolated <code>nan_inf</code> check and a <code>Z</code> range of 0 to 10000, retaining its size and modification time. This is a test policy, not a certification of the entire sequence.</p>
+        <p>A historical headless-wheel console-spawn smoke passed real EXR analysis without Qt/OpenCV using NumPy 2.5.4 / OpenEXR 3.5.2, without changing the lock. GUI checks covered normal/in-process modes and an injected fatal-cleanup state; one existing Full-HD render was checked read-only normally and with a 0.01-second frame deadline. This is local correctness/recovery evidence, not production 4K/NFS capacity proof. Stable 1.3.0 package hashes remain unchanged.</p>
+        <pre><code>uv sync --locked --extra dev
+uv run --locked --extra dev pytest --cov-fail-under=95
+uv run --locked --extra dev ruff check src tests scripts experiments/benchmark_simulated_sequences.py experiments/benchmark_memory.py
+uv run --locked --extra dev mypy src/aovguard scripts/create_release.py</code></pre>
+        <h3>Prepare a development package</h3>
+        <p>The packager retains required test helpers, excludes EXRs, local reports, caches and common private-file patterns, and adds a manifest with each file's size and SHA-256. Review the selection and contents before sharing: these filters are not a secret scanner.</p>
+        <pre><code>python scripts/create_release.py --list
+python scripts/create_release.py --output dist/AOVGuard-development-source.zip
+python scripts/create_release.py --verify dist/AOVGuard-development-source.zip</code></pre>
+        <p>Only standard Python 3.11/3.12 is required. The ZIP is verified before publication at its destination, and existing files are never overwritten. The destination filesystem must support hard links, such as local NTFS; otherwise publication fails without a destructive fallback. The manifest checks integrity, not authenticity, and verification does not extract or execute files. Byte-for-byte reproducibility requires identical files and the same Python/zlib runtime, with no edits during packaging. This is a development snapshot, not a newly published stable release; older ZIPs without manifests are outside this verification.</p>
+        <p>Released 1.3.0 baseline verification: <strong>434 passed, 1 skipped, 95.56% combined coverage</strong> for each Windows/Python 3.11.14 and 3.12.12 run. The skip concerns symlink-creation permissions. Ruff and configured mypy passed across 42 source files. The small 800-frame temporary EXR case had missing frame 17 and corrupt frame 401: 799 discovered, 798 processed; this is recovery evidence, not a production 4K capacity claim. Historical checkpoints remain 368/95.41% and 282/95.37% at <code>530ed76</code>. No completed Linux or remote CI run is implied.</p>
+        <pre><code>uv run python experiments/benchmark_memory.py "D:/renders/shot" --max-frames 800</code></pre>
+        <p>This read-only command measures native process peak RSS in an isolated child using existing EXRs. It generates no images or reports; oversized sources are refused rather than sampled. The CI gate is 95% combined coverage and includes lint/types, wheel building and CLI-only installation. Tests use temporary fixtures, and <code>examples</code> retains only <code>.gitkeep</code>.</p>
+        <p>The preceding memory-admission milestone had <strong>523 passed, 1 skipped, 95.81% combined coverage</strong> in each Windows/Python 3.11.14 and 3.12.12 run; configured mypy covered 43 source modules. These totals and measurements predate the isolated execution update. On one existing 1920 &times; 1080, 56-channel, 17-AOV render, the estimate was 2373.9453125 MiB: a 4096 MiB budget admitted it with 935.59375 MiB peak RSS, whereas 1024 MiB rejected it before pixels with 39.01171875 MiB peak and no import-baseline growth. These single measurements do not validate 4K or NFS capacity.</p>
+        <pre><code>uv run python experiments/benchmark_memory.py "D:/renders/approved/frame.0001.exr" --max-memory-mb 4096</code></pre>
         <div class="text-links"><a href="../README.md">Repository README</a><a href="../CHANGELOG.md">Change history</a><a href="../docs/limitations.md">Technical limitations</a><a href="../LICENSE">MIT License</a></div>
       </section>
     </article>

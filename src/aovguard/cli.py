@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import replace
 from pathlib import Path
 
 from aovguard.analysis_core import AOVResult, Thresholds, write_csv, write_json
 from aovguard.config import load_thresholds, merge_threshold_overrides
 from aovguard.core.analysis import analyze as analyze_backend
-from aovguard.core.luminance import REC601, REC709, LuminanceWeights
+from aovguard.core.luminance import LuminanceWeights, luminance_weights_for_model
 from aovguard.core.models import (
     AnalysisOptions,
     AnalysisReport,
@@ -20,6 +21,7 @@ from aovguard.core.models import (
 )
 from aovguard.core.status import AnalysisStatus, analysis_status, severity_counts
 from aovguard.discovery.frame_discovery import discover_frames
+from aovguard.io.output import validate_output_paths
 from aovguard.io.reader import OpenEXRReader
 from aovguard.multilayer import analyze_multilayer, inspect_exr
 from aovguard.reports.comparison import (
@@ -87,7 +89,7 @@ def _add_backend_analysis_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--preset", default=None, help="Preset name to record in report metadata.")
     parser.add_argument(
         "--luminance-model",
-        choices=("rec709", "rec601"),
+        choices=("rec709", "rec601", "acescg", "ap1"),
         default="rec709",
         help="Built-in luminance model for color AOV metrics.",
     )
@@ -105,6 +107,34 @@ def _add_backend_analysis_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         help="Refuse analysis when discovery exceeds this positive frame limit.",
+    )
+    parser.add_argument(
+        "--max-memory-mb",
+        type=float,
+        default=None,
+        help=(
+            "Refuse pixel decoding for frames whose conservative pre-read estimate "
+            "exceeds this positive budget in MiB (1 MiB = 1,048,576 bytes). "
+            "This is an estimate gate, not a hard operating-system memory limit."
+        ),
+    )
+    parser.add_argument(
+        "--in-process",
+        action="store_true",
+        help=(
+            "Disable the default isolated frame worker. In-process native EXR reads "
+            "cannot be interrupted; frame timeouts require isolation."
+        ),
+    )
+    parser.add_argument(
+        "--frame-timeout-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Positive finite per-frame service deadline in seconds for the isolated worker, "
+            "including header/decode/reductions/IPC after startup readiness. "
+            "Startup and termination cleanup have separate deadlines."
+        ),
     )
     parser.add_argument(
         "--expected-frame-range",
@@ -188,10 +218,8 @@ def _count_multilayer_frames(folder: Path) -> int:
 def _options_from_backend_args(args: argparse.Namespace) -> AnalysisOptions:
     if args.luminance_weights is not None:
         weights = LuminanceWeights.from_values(args.luminance_weights)
-    elif args.luminance_model == "rec601":
-        weights = REC601
     else:
-        weights = REC709
+        weights = luminance_weights_for_model(args.luminance_model)
 
     return AnalysisOptions(
         preset_name=args.preset,
@@ -202,6 +230,9 @@ def _options_from_backend_args(args: argparse.Namespace) -> AnalysisOptions:
         max_depth=args.max_depth,
         allow_multiple_sequences=args.allow_multiple_sequences,
         max_frames=args.max_frames,
+        max_memory_mb=args.max_memory_mb,
+        isolate_frames=not args.in_process,
+        frame_timeout_seconds=args.frame_timeout_seconds,
         expected_frame_range=(
             tuple(args.expected_frame_range) if args.expected_frame_range is not None else None
         ),
@@ -271,8 +302,12 @@ def _print_backend_report(report: AnalysisReport) -> None:
         print("")
         print("Findings:")
         for finding in report.findings:
-            target = finding.aov or finding.channel or finding.file or report.source
+            target = "/".join(value for value in (finding.aov, finding.channel) if value)
+            target = target or str(finding.file or report.source)
             print(f"  [{finding.severity.value}] {finding.rule_id}: {target} - {finding.message}")
+            paths = finding.affected_files or ((finding.file,) if finding.file else ())
+            for path in paths:
+                print(f"    File: {path}")
 
 
 def _print_sequence_check(result: SequenceCheckResult) -> None:
@@ -303,8 +338,18 @@ def _print_sequence_check(result: SequenceCheckResult) -> None:
 def _print_structure(inspection: FileInspection) -> None:
     print(f"EXR file: {Path(inspection.path).resolve()}")
     print(f"Size: {inspection.width}x{inspection.height}")
+    print(f"Display window: {inspection.display_width}x{inspection.display_height}")
+    print(f"Data window coordinates: {inspection.data_window}")
+    print(f"Display window coordinates: {inspection.display_window}")
     print(f"Parts: {inspection.part_count}")
     print(f"Deep: {inspection.is_deep}")
+    for part in inspection.parts:
+        print(
+            f"  Part {part.index}: {part.name or '(unnamed)'} | view={part.view or '-'} | "
+            f"data={part.width}x{part.height} {part.data_window} | "
+            f"display={part.display_width}x{part.display_height} {part.display_window} | "
+            f"deep={part.is_deep}"
+        )
     print("")
     print("Channels:")
     for channel in inspection.channels:
@@ -328,6 +373,8 @@ def _print_report_comparison(comparison: ReportComparison) -> None:
     print(f"AOVs changed: {comparison.changed_aov_count}")
     print(f"New findings: {len(comparison.new_findings)}")
     print(f"Resolved findings: {len(comparison.resolved_findings)}")
+    for warning in comparison.warnings:
+        print(f"Compatibility warning: {warning}")
     print("-" * 80)
     for delta in comparison.metric_deltas:
         print(
@@ -389,7 +436,22 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    output_paths = tuple(
+        value for name in ("json_path", "html_path", "csv_path")
+        if (value := getattr(args, name, None))
+    )
+    protected_paths = tuple(
+        value for name in ("source", "input_folder", "rules_config", "config", "baseline", "candidate")
+        if (value := getattr(args, name, None))
+    )
+    try:
+        validate_output_paths(output_paths, protected_paths=protected_paths)
+    except (OSError, ValueError, RuntimeError) as exc:
+        parser.exit(1, f"aovguard {args.command}: error: {exc}\n")
+
     if args.command == "analyze":
+        if args.in_process and args.frame_timeout_seconds is not None:
+            parser.error("--frame-timeout-seconds requires isolation; remove --in-process.")
         try:
             options = _options_from_backend_args(args)
             options, rule_definitions = _rules_from_backend_args(args, options)
@@ -400,21 +462,28 @@ def main(argv: list[str] | None = None) -> int:
                 reader,
                 rule_definitions=rule_definitions,
             )
+            _print_backend_report(report)
+            if args.json_path:
+                write_analysis_json(
+                    report, args.json_path, options=options, protected_paths=protected_paths,
+                )
+                print(f"JSON report written to: {args.json_path}")
+            if args.html_path:
+                write_analysis_html(
+                    report, args.html_path, options=options, protected_paths=protected_paths,
+                )
+                print(f"HTML report written to: {args.html_path}")
+            status = analysis_status(report)
+            if status is AnalysisStatus.FAIL:
+                return 1
+            if status is AnalysisStatus.WARNING and args.fail_on_warning:
+                return 1
+            return 0
+        except KeyboardInterrupt:
+            print("aovguard analyze: interrupted by user.", file=sys.stderr)
+            return 130
         except Exception as exc:
             parser.exit(1, f"aovguard analyze: error: {exc}\n")
-        _print_backend_report(report)
-        if args.json_path:
-            write_analysis_json(report, args.json_path, options=options)
-            print(f"JSON report written to: {args.json_path}")
-        if args.html_path:
-            write_analysis_html(report, args.html_path, options=options)
-            print(f"HTML report written to: {args.html_path}")
-        status = analysis_status(report)
-        if status is AnalysisStatus.FAIL:
-            return 1
-        if status is AnalysisStatus.WARNING and args.fail_on_warning:
-            return 1
-        return 0
 
     if args.command == "inspect-structure":
         reader = OpenEXRReader()
@@ -465,12 +534,15 @@ def main(argv: list[str] | None = None) -> int:
                 args.candidate,
                 tolerance=args.tolerance,
             )
+            _print_report_comparison(comparison)
+            if args.json_path:
+                write_comparison_json(comparison, args.json_path, protected_paths=protected_paths)
+                print(f"Comparison JSON written to: {args.json_path}")
+        except KeyboardInterrupt:
+            print("aovguard compare-reports: interrupted by user.", file=sys.stderr)
+            return 130
         except Exception as exc:
             parser.exit(1, f"aovguard compare-reports: error: {exc}\n")
-        _print_report_comparison(comparison)
-        if args.json_path:
-            write_comparison_json(comparison, args.json_path)
-            print(f"Comparison JSON written to: {args.json_path}")
         return 0
 
     if args.command == "analyze-simple":
@@ -487,10 +559,11 @@ def main(argv: list[str] | None = None) -> int:
                 mode="simple",
                 thresholds=thresholds,
                 frames_analyzed=total_frames,
+                protected_paths=protected_paths,
             )
             print(f"JSON report written to: {args.json_path}")
         if args.csv_path:
-            write_csv(results, args.csv_path)
+            write_csv(results, args.csv_path, protected_paths=protected_paths)
             print(f"CSV report written to: {args.csv_path}")
         return 0
 
@@ -512,10 +585,11 @@ def main(argv: list[str] | None = None) -> int:
                 mode="multilayer",
                 thresholds=thresholds,
                 frames_analyzed=total_frames,
+                protected_paths=protected_paths,
             )
             print(f"JSON report written to: {args.json_path}")
         if args.csv_path:
-            write_csv(results, args.csv_path)
+            write_csv(results, args.csv_path, protected_paths=protected_paths)
             print(f"CSV report written to: {args.csv_path}")
         return 0
 

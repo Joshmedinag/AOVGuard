@@ -9,7 +9,7 @@ from aovguard.simple import _compute_metrics as compute_simple_metrics
 from aovguard.simple import _read_exr, analyze_simple
 
 
-def test_simple_metrics_interpret_opencv_bgr_as_rgb_luminance() -> None:
+def test_simple_metrics_preserve_legacy_bgr_as_rgb_luminance() -> None:
     image_bgr = np.array([[[3.0, 2.0, 1.0]]], dtype=np.float32)
 
     ratio, avg_lum, max_lum = compute_simple_metrics(image_bgr)

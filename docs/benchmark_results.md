@@ -1,6 +1,10 @@
 # Frame-first Benchmark Results
 
-## Recorded run
+## Historical recorded run
+
+These measurements predate the 2026-10-11 reliability changes. They are retained
+as historical evaluation evidence; the revised header preflight, channel
+preservation and buffer lifetime have not been rebenchmarked on this dataset.
 
 - Date (UTC): 2026-08-14
 - Platform: Windows 11, build 26200
@@ -41,7 +45,7 @@ compression, disk speed, resolution and AOV count can change the result.
 is stored in `experiments/benchmark_results.json`; the method and limitations
 are defined in `docs/benchmark_methodology.md`.
 
-## Simulated long-sequence scalability
+## Historical simulated long-sequence scalability
 
 The 1.1.0 frame-count safeguard was evaluated separately on 16 September 2026
 with `experiments/benchmark_simulated_sequences.py`. This deterministic test
@@ -66,3 +70,53 @@ and approximately linear processing time. They do not measure OpenEXR decode,
 filesystem, compression or full-resolution native memory and must not be used
 as production throughput claims. Use `--max-frames` to reject unexpectedly
 large jobs before decoding and validate final capacity with authorised renders.
+
+## Native-memory smoke measurement, 2026-10-12
+
+The isolated-process benchmark was smoke-tested locally using an existing small
+320 x 180, 15-channel fixture. Peak resident memory was 45.90 MiB; the
+after-import baseline high-water mark was 38.77 MiB. This confirms that native
+process memory can be measured, not that the backend uses less memory than a
+prior implementation. It is not a 4K, NFS or production-capacity evaluation.
+
+For an existing authorized source:
+
+```powershell
+uv run python experiments/benchmark_memory.py "D:/renders/shot" --max-frames 800
+```
+
+No EXRs are generated. An oversized discovery is refused rather than sampled;
+measurements and configuration are printed as JSON. See the methodology for
+high-water-mark interpretation and platform units.
+
+## Unreleased memory-guard calibration, 2026-10-12
+
+One existing user render was measured read-only in separate child processes on
+Windows/Python 3.12.12/OpenEXR 3.4.12. The source name/path is anonymized here:
+1920 x 1080, 56 physical channels, 17 AOV descriptors. Its `flat-working-set-v1`
+estimate was 2,489,262,080 bytes (2373.9453125 MiB), including all channels and
+parts rather than a selected color subset.
+
+| Budget (MiB) | Estimated MiB | Processed | Failed | Peak RSS MiB | Analysis time |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4096 | 2373.9453125 | 1 | 0 | 935.59375 | 1.849241 s |
+| 1024 | 2373.9453125 | 0 | 1 | 39.01171875 | 0.0021095 s |
+
+The admitted run's after-import baseline high-water mark was 40,816,640 bytes;
+its peak was 981,041,152 bytes. It diagnosed 7 color and 10 non-color AOVs and
+produced one contextual finding. The rejected run had no peak growth above its
+import baseline and never invoked pixel decode, corroborating the constructor-
+spy regression tests. These are single measurements, not throughput or memory-
+reduction promises. They validate the gate on one Full-HD input, not 4K, NFS,
+all compressions or concurrent-source safety. 4K estimate tests use headers
+without allocating 4K pixels.
+
+Example using an existing authorized source:
+
+```powershell
+uv run python experiments/benchmark_memory.py "D:/renders/approved/frame.0001.exr" --max-memory-mb 4096
+```
+
+The guard is available in the development checkout after 1.3.0; previously
+created 1.3.0 distributions have not been regenerated for this update. It is
+an estimate-based admission decision, not an RSS/global memory limit.

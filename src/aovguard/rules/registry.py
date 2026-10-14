@@ -19,6 +19,7 @@ from aovguard.rules.builtin import (
     validate_unknown_aov,
 )
 from aovguard.rules.definitions import RuleDefinition
+from aovguard.rules.technical import validate_technical_range
 
 RuleFunction = Callable[[AnalysisReport, RuleDefinition], list[Finding]]
 
@@ -32,6 +33,7 @@ RULES: dict[str, RuleFunction] = {
     "negative_values": validate_negative_values,
     "extreme_values": validate_extreme_values,
     "constant_channel": validate_constant_channel,
+    "technical_range": validate_technical_range,
     "resolution_mismatch": validate_resolution_mismatch,
     "aov_structure_mismatch": validate_aov_structure_mismatch,
 }

@@ -3,12 +3,15 @@
 ## Practical project
 
 - [ ] Repository opens at the folder containing `pyproject.toml`.
-- [ ] `uv sync --python 3.12 --extra dev` succeeds in a clean environment.
+- [ ] `uv sync --locked --python 3.12 --extra dev` succeeds in a clean environment.
 - [ ] `examples/` contains only `.gitkeep`; real EXRs remain outside the repository.
 - [ ] CLI inspection, analysis and sequence commands succeed.
-- [ ] GUI launches and can analyze file and folder sources.
+- [ ] `uv run --extra gui aovguard-ui` launches and can analyze file/folder sources.
+- [ ] Base wheel CLI runs without Qt or OpenCV; the GUI wheel extra is optional.
+- [ ] Flat multipart parts retain separate identities, views and windows.
+- [ ] Any deep part or partial decode fails the whole frame explicitly.
 - [ ] JSON and HTML exports open correctly.
-- [ ] `uv run pytest --cov-fail-under=90` passes.
+- [ ] `uv run --locked --extra dev pytest --cov-fail-under=95` passes.
 - [ ] Benchmark command and raw results are included.
 - [ ] `README.md`, licence, citation, changelog and references are current.
 - [ ] ZIP excludes `.venv`, caches, build artifacts and every EXR file.
@@ -46,6 +49,10 @@
 ## Final archive
 
 - [ ] Use a clear release filename and include the project root only once.
+- [ ] The ZIP version comes from `pyproject.toml`, matching wheel/citation metadata.
+- [ ] Preview package selection with `python scripts/create_release.py --list` and review included files for private content.
+- [ ] Use a new destination; keep released artifacts separate from development snapshots.
+- [ ] Verify the new ZIP with `python scripts/create_release.py --verify path/to/snapshot.zip` and record its overall SHA-256.
 - [ ] Extract the ZIP into a temporary folder and repeat installation/tests.
 - [ ] Confirm the video, website files, practical project and thesis are present
   in the required submission locations before the deadline.
